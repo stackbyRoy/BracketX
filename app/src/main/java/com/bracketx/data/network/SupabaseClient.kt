@@ -1,6 +1,6 @@
 package com.bracketx.data.network
 
-import com.bracketx.BuildConfig
+import com.stackbyroy.bracketx.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json

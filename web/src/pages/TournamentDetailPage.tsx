@@ -183,7 +183,7 @@ export const TournamentDetailPage: React.FC = () => {
 
         {isAndroid && (
           <a
-            href={`intent://bracketx.vercel.app/tournament/${tournament.id}#Intent;scheme=https;package=com.bracketx;end`}
+            href={`intent://bracketx.vercel.app/tournament/${tournament.id}#Intent;scheme=https;package=com.stackbyroy.bracketx;end`}
             style={{
               display: 'inline-flex',
               alignItems: 'center',

@@ -9,11 +9,11 @@ plugins {
 }
 
 android {
-    namespace = "com.bracketx"
+    namespace = "com.stackbyroy.bracketx"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.bracketx"
+        applicationId = "com.stackbyroy.bracketx"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

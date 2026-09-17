@@ -3,7 +3,7 @@
     "relation": ["delegate_permission/common.handle_all_urls"],
     "target": {
       "namespace": "android_app",
-      "package_name": "com.bracketx",
+      "package_name": "com.stackbyroy.bracketx",
       "sha256_cert_fingerprints": [
         "FE:06:F8:68:7B:22:A0:DE:ED:45:91:3A:84:EA:FA:F8:83:91:BD:F7:C0:A2:2F:02:93:12:20:C9:6C:76:0E:16"
       ]
