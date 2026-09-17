@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Play, CheckCircle2, Lock, Shuffle, Loader2 } from 'lucide-react';
+import { useParams, Link, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, Play, CheckCircle2, Lock, Shuffle, Loader2, Share2, Check } from 'lucide-react';
 import type { Tournament, Participant, Match, Group, Standing, FairnessScore } from '../engine/types';
 import { api, supabase } from '../api/supabase';
 import { useAuth } from '../context/AuthContext';
@@ -10,6 +10,7 @@ import { RegistrationModal } from '../components/RegistrationModal';
 import { ScoreModal } from '../components/ScoreModal';
 import { DrawPreviewModal } from '../components/DrawPreviewModal';
 import { FairDrawEngine } from '../engine/FairDrawEngine';
+import { shareTournament } from '../utils/share';
 
 export const TournamentDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -36,6 +37,23 @@ export const TournamentDetailPage: React.FC = () => {
     opportunityDistribution: 91.0,
     controlledRandomness: 89.0,
   });
+
+  const [searchParams] = useSearchParams();
+  const justCreated = searchParams.get('created') === 'true';
+  const [shareFeedback, setShareFeedback] = useState<string | null>(null);
+  const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+
+  const handleShare = async () => {
+    if (!tournament) return;
+    const result = await shareTournament(tournament);
+    if (result.copied) {
+      setShareFeedback('Link Copied!');
+      setTimeout(() => setShareFeedback(null), 3000);
+    } else if (result.shared) {
+      setShareFeedback('Shared!');
+      setTimeout(() => setShareFeedback(null), 3000);
+    }
+  };
 
   useEffect(() => {
     if (id) {
@@ -156,13 +174,67 @@ export const TournamentDetailPage: React.FC = () => {
 
   return (
     <div className="app-container" style={{ padding: '24px 16px 80px 16px' }}>
-      {/* Back button */}
-      <div style={{ marginBottom: '16px' }}>
+      {/* Top row: Back button & Android App Link prompt */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
         <Link to="/" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: 'var(--text-secondary)', textDecoration: 'none', fontSize: '13px', fontWeight: 600 }}>
           <ArrowLeft size={16} />
           <span>All Tournaments</span>
         </Link>
+
+        {isAndroid && (
+          <a
+            href={`intent://bracketx.vercel.app/tournament/${tournament.id}#Intent;scheme=https;package=com.bracketx;end`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 12px',
+              borderRadius: 'var(--radius-sm)',
+              background: 'rgba(47, 128, 237, 0.15)',
+              border: '1px solid rgba(47, 128, 237, 0.3)',
+              color: 'var(--accent-blue)',
+              textDecoration: 'none',
+              fontSize: '12px',
+              fontWeight: 600,
+            }}
+          >
+            <span>📱 Open in Android App</span>
+          </a>
+        )}
       </div>
+
+      {/* Share / Invite Callout Banner */}
+      {(tournament.registrationOpen || justCreated) && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '14px 18px',
+          background: 'linear-gradient(90deg, rgba(47, 128, 237, 0.12) 0%, rgba(39, 174, 96, 0.08) 100%)',
+          border: '1px solid rgba(47, 128, 237, 0.3)',
+          borderRadius: 'var(--radius-lg)',
+          marginBottom: '20px',
+          flexWrap: 'wrap',
+          gap: '12px',
+        }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>{justCreated ? '🎉 Tournament Created Successfully!' : '📢 Player Registration is Open!'}</span>
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+              Share this link with players. On iOS and Desktop it opens the web app, and on Android it opens directly in the BracketX app!
+            </div>
+          </div>
+          <button
+            onClick={handleShare}
+            className="btn-primary"
+            style={{ padding: '8px 16px', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          >
+            {shareFeedback === 'Link Copied!' ? <Check size={15} /> : <Share2 size={15} />}
+            <span>{shareFeedback || 'Share Tournament'}</span>
+          </button>
+        </div>
+      )}
 
       {/* Header Summary Card */}
       <div className="glass-card" style={{ padding: '24px', borderRadius: 'var(--radius-lg)', marginBottom: '24px' }}>
@@ -191,7 +263,18 @@ export const TournamentDetailPage: React.FC = () => {
           </div>
 
           {/* Action Buttons */}
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* Universal Share Button */}
+            <button
+              onClick={handleShare}
+              className="btn-secondary"
+              title="Share Tournament Link"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            >
+              {shareFeedback === 'Link Copied!' ? <Check size={16} /> : <Share2 size={16} />}
+              <span>{shareFeedback || 'Share'}</span>
+            </button>
+
             {isHost ? (
               <>
                 {tournament.status === 'draft' && (

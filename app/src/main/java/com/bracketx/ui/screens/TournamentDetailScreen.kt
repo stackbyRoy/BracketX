@@ -17,12 +17,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.ui.platform.LocalContext
+import com.bracketx.util.TournamentShareHelper
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -77,8 +80,10 @@ import java.util.UUID
 @Composable
 fun TournamentDetailScreen(
     tournamentId: String,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onRequireAuth: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     val currentUser by RepositoryProvider.authRepository.currentUser.collectAsState()
     val tournamentFlow = remember(tournamentId) { RepositoryProvider.tournamentRepository.getTournament(tournamentId) }
     val tournament by tournamentFlow.collectAsState(initial = null)
@@ -136,6 +141,17 @@ fun TournamentDetailScreen(
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = PrimaryText)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = {
+                        TournamentShareHelper.shareTournament(context, t)
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Share Tournament",
+                            tint = AccentBlue
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = BackgroundDark)
@@ -268,13 +284,21 @@ fun TournamentDetailScreen(
                             if (t.registrationOpen && !isRegistered) {
                                 val isFull = participants.size >= t.maxParticipants
                                 Button(
-                                    onClick = { showRegistrationDialog = true },
+                                    onClick = {
+                                        if (currentUser == null) {
+                                            onRequireAuth()
+                                        } else {
+                                            showRegistrationDialog = true
+                                        }
+                                    },
                                     enabled = !isFull,
                                     colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Text(
-                                        if (isFull) "Registration Full (Max ${t.maxParticipants})" else "Join Tournament",
+                                        if (currentUser == null) "Sign In to Join"
+                                        else if (isFull) "Registration Full (Max ${t.maxParticipants})"
+                                        else "Join Tournament",
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
@@ -285,6 +309,53 @@ fun TournamentDetailScreen(
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    OutlinedButton(
+                        onClick = { TournamentShareHelper.shareTournament(context, t) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, AccentBlue.copy(alpha = 0.5f))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = null,
+                            tint = AccentBlue
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Share Tournament", color = AccentBlue, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+
+                    if (t.registrationOpen) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(AccentBlue.copy(alpha = 0.1f))
+                                .border(1.dp, AccentBlue.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
+                                .padding(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("📢 Registration is Open", color = PrimaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text("Share this link with players to join", color = SecondaryText, fontSize = 11.sp)
+                                }
+                                Button(
+                                    onClick = { TournamentShareHelper.shareTournament(context, t) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text("Invite", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }

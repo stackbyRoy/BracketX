@@ -67,7 +67,7 @@ export const CreateTournamentPage: React.FC = () => {
         settings,
       });
 
-      navigate(`/tournament/${created.id}`);
+      navigate(`/tournament/${created.id}?created=true`);
     } catch (err: any) {
       setError(err.message || 'Failed to create tournament.');
       setLoading(false);
