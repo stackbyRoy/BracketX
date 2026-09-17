@@ -1,0 +1,1 @@
+# BracketX ProGuard rules
