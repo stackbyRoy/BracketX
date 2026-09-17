@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Trophy, AlertCircle, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { AlertCircle, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export const AuthPage: React.FC = () => {
@@ -68,19 +68,18 @@ export const AuthPage: React.FC = () => {
       }}>
         {/* Emblem */}
         <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-          <div style={{
-            width: '64px',
-            height: '64px',
-            borderRadius: '18px',
-            background: 'linear-gradient(135deg, #2F80ED 0%, #00D2FF 100%)',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 0 24px -2px rgba(47, 128, 237, 0.6)',
-            marginBottom: '16px',
-          }}>
-            <Trophy size={32} color="#FFFFFF" />
-          </div>
+          <img
+            src="/logo.png"
+            alt="BracketX"
+            style={{
+              width: '64px',
+              height: '64px',
+              borderRadius: '18px',
+              objectFit: 'cover',
+              boxShadow: '0 0 24px -2px rgba(47, 128, 237, 0.6)',
+              marginBottom: '16px',
+            }}
+          />
           <h1 style={{ fontSize: '26px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '6px' }}>
             {isSignUp ? 'Create BracketX Account' : 'Welcome Back'}
           </h1>

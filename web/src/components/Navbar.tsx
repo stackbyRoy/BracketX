@@ -32,18 +32,17 @@ export const Navbar: React.FC = () => {
           gap: '10px',
           textDecoration: 'none',
         }}>
-          <div style={{
-            width: '36px',
-            height: '36px',
-            borderRadius: '10px',
-            background: 'linear-gradient(135deg, #2F80ED 0%, #00D2FF 100%)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 0 16px -2px rgba(47, 128, 237, 0.5)',
-          }}>
-            <Trophy size={20} color="#FFFFFF" />
-          </div>
+          <img
+            src="/logo.png"
+            alt="BracketX Logo"
+            style={{
+              width: '36px',
+              height: '36px',
+              borderRadius: '10px',
+              objectFit: 'cover',
+              boxShadow: '0 0 16px -2px rgba(47, 128, 237, 0.5)',
+            }}
+          />
           <div>
             <span style={{
               fontFamily: 'var(--font-display)',
