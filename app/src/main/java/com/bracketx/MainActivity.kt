@@ -4,9 +4,15 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import com.bracketx.data.repository.RepositoryProvider
 import com.bracketx.ui.BracketXApp
+import com.bracketx.ui.screens.SplashScreen
 import com.bracketx.ui.theme.BracketXTheme
 
 class MainActivity : ComponentActivity() {
@@ -20,7 +26,23 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             BracketXTheme {
-                BracketXApp(incomingIntent = incomingIntent.value)
+                var showSplash by remember { mutableStateOf(true) }
+
+                Crossfade(
+                    targetState = showSplash,
+                    animationSpec = tween(durationMillis = 400),
+                    label = "SplashTransition"
+                ) { isSplash ->
+                    if (isSplash) {
+                        SplashScreen(
+                            onSplashFinished = {
+                                showSplash = false
+                            }
+                        )
+                    } else {
+                        BracketXApp(incomingIntent = incomingIntent.value)
+                    }
+                }
             }
         }
     }
