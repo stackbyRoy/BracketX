@@ -1,5 +1,9 @@
 package com.bracketx.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,6 +22,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -40,6 +49,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -49,16 +60,24 @@ import com.bracketx.domain.model.Tournament
 import com.bracketx.domain.model.TournamentFormat
 import com.bracketx.domain.model.TournamentSettings
 import com.bracketx.domain.model.TournamentStatus
+import com.bracketx.domain.model.TournamentVisibility
 import com.bracketx.ui.theme.AccentBlue
 import com.bracketx.ui.theme.BackgroundDark
 import com.bracketx.ui.theme.BorderSubtle
 import com.bracketx.ui.theme.PrimaryText
 import com.bracketx.ui.theme.SecondaryText
+import com.bracketx.ui.theme.SuccessGreen
 import com.bracketx.ui.theme.SurfaceCard
 import com.bracketx.ui.theme.SurfaceDark
 import com.bracketx.ui.theme.SurfaceElevatedDark
+import com.bracketx.util.TournamentShareHelper
 import kotlinx.coroutines.launch
 import java.util.UUID
+
+private fun generateSecureAccessCode(): String {
+    val chars = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+    return (1..6).map { chars.random() }.joinToString("")
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,6 +85,7 @@ fun CreateTournamentScreen(
     onNavigateBack: () -> Unit,
     onTournamentCreated: (String) -> Unit
 ) {
+    val context = LocalContext.current
     val currentUser by RepositoryProvider.authRepository.currentUser.collectAsState()
     val scope = rememberCoroutineScope()
 
@@ -74,6 +94,11 @@ fun CreateTournamentScreen(
     var selectedGame by remember { mutableStateOf(GameType.FC_MOBILE) }
     var selectedFormat by remember { mutableStateOf(TournamentFormat.SINGLE_ELIMINATION) }
     var maxParticipants by remember { mutableIntStateOf(32) }
+    var selectedVisibility by remember { mutableStateOf(TournamentVisibility.PUBLIC) }
+    var generatedAccessCode by remember { mutableStateOf(generateSecureAccessCode()) }
+
+    var createdTournamentResult by remember { mutableStateOf<Tournament?>(null) }
+    var showCreatedSuccessDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = BackgroundDark,
@@ -103,7 +128,7 @@ fun CreateTournamentScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "STEP $currentStep OF 4",
+                    text = "STEP $currentStep OF 5",
                     color = AccentBlue,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
@@ -212,6 +237,77 @@ fun CreateTournamentScreen(
                 }
 
                 4 -> {
+                    Text("Tournament Visibility", color = PrimaryText, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("Control who can discover and register for your tournament.", color = SecondaryText, fontSize = 13.sp)
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    SelectableCard(
+                        title = "Public Tournament",
+                        subtitle = "Anyone can discover and register.",
+                        isSelected = selectedVisibility == TournamentVisibility.PUBLIC,
+                        onClick = { selectedVisibility = TournamentVisibility.PUBLIC }
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    SelectableCard(
+                        title = "Private Tournament",
+                        subtitle = "Tournament is not publicly listed and requires an access code.",
+                        isSelected = selectedVisibility == TournamentVisibility.PRIVATE,
+                        onClick = { selectedVisibility = TournamentVisibility.PRIVATE }
+                    )
+
+                    if (selectedVisibility == TournamentVisibility.PRIVATE) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(SurfaceElevatedDark)
+                                .border(1.dp, AccentBlue.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                                .padding(14.dp)
+                        ) {
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "PRIVATE ACCESS CODE",
+                                        color = AccentBlue,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 1.sp
+                                    )
+                                    Text(
+                                        text = "Regenerate",
+                                        color = SecondaryText,
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.clickable { generatedAccessCode = generateSecureAccessCode() }
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = generatedAccessCode,
+                                    color = PrimaryText,
+                                    fontSize = 22.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontFamily = FontFamily.Monospace,
+                                    letterSpacing = 2.sp
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Players will be required to enter this access code before registering. You will also be able to copy and share this code after creation.",
+                                    color = SecondaryText,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                5 -> {
                     Text("Review & Confirm", color = PrimaryText, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     Text("Verify the tournament setup before launching.", color = SecondaryText, fontSize = 13.sp)
                     Spacer(modifier = Modifier.height(16.dp))
@@ -230,6 +326,10 @@ fun CreateTournamentScreen(
                             ReviewRow("Metric", selectedGame.metricLabel)
                             ReviewRow("Format", selectedFormat.displayName)
                             ReviewRow("Max Players", "$maxParticipants players (Highest: 32)")
+                            ReviewRow("Visibility", if (selectedVisibility == TournamentVisibility.PUBLIC) "Public" else "Private (Access Code Protected)")
+                            if (selectedVisibility == TournamentVisibility.PRIVATE) {
+                                ReviewRow("Access Code", generatedAccessCode)
+                            }
                         }
                     }
                 }
@@ -251,7 +351,7 @@ fun CreateTournamentScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                 }
 
-                if (currentStep < 4) {
+                if (currentStep < 5) {
                     Button(
                         onClick = { currentStep++ },
                         enabled = currentStep != 1 || tournamentName.isNotBlank(),
@@ -269,14 +369,23 @@ fun CreateTournamentScreen(
                                 game = selectedGame,
                                 format = selectedFormat,
                                 status = TournamentStatus.DRAFT,
+                                visibility = selectedVisibility,
                                 maxParticipants = maxParticipants.coerceIn(2, 32),
                                 registrationOpen = false,
                                 settings = TournamentSettings()
                             )
 
+                            val codeToSave = if (selectedVisibility == TournamentVisibility.PRIVATE) generatedAccessCode else null
+
                             scope.launch {
-                                RepositoryProvider.tournamentRepository.createTournament(newTournament)
-                                onTournamentCreated(newTournament.id)
+                                val result = RepositoryProvider.tournamentRepository.createTournament(newTournament, codeToSave)
+                                result.onSuccess { created ->
+                                    createdTournamentResult = created
+                                    showCreatedSuccessDialog = true
+                                }.onFailure {
+                                    createdTournamentResult = newTournament
+                                    showCreatedSuccessDialog = true
+                                }
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
@@ -287,6 +396,139 @@ fun CreateTournamentScreen(
             }
             Spacer(modifier = Modifier.height(24.dp))
         }
+    }
+
+    // Tournament Created Success Modal / Dialog
+    if (showCreatedSuccessDialog && createdTournamentResult != null) {
+        val tournament = createdTournamentResult!!
+        val isPrivate = tournament.visibility == TournamentVisibility.PRIVATE
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+
+        AlertDialog(
+            onDismissRequest = { /* Require explicit user action */ },
+            containerColor = SurfaceDark,
+            title = {
+                Text(
+                    text = "Tournament Created! 🏆",
+                    color = PrimaryText,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text(
+                        text = "Your tournament is ready. Use the Tournament ID and share link to invite players.",
+                        color = SecondaryText,
+                        fontSize = 13.sp
+                    )
+
+                    // Tournament ID Card
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(SurfaceCard)
+                            .border(1.dp, BorderSubtle, RoundedCornerShape(8.dp))
+                            .padding(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text("TOURNAMENT ID", color = SecondaryText, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                Text(
+                                    text = tournament.publicId.ifBlank { "BRX-" + tournament.id.take(6).uppercase() },
+                                    color = PrimaryText,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    val idToCopy = tournament.publicId.ifBlank { tournament.id }
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Tournament ID", idToCopy))
+                                    Toast.makeText(context, "Tournament ID copied to clipboard", Toast.LENGTH_SHORT).show()
+                                }
+                            ) {
+                                Icon(Icons.Default.ContentCopy, contentDescription = "Copy ID", tint = AccentBlue)
+                            }
+                        }
+                    }
+
+                    // Private Access Code Card (if Private)
+                    if (isPrivate) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(SurfaceElevatedDark)
+                                .border(1.dp, AccentBlue.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                                .padding(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text("PRIVATE ACCESS CODE", color = AccentBlue, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                    Text(
+                                        text = generatedAccessCode,
+                                        color = PrimaryText,
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Private Access Code", generatedAccessCode))
+                                        Toast.makeText(context, "Access Code copied to clipboard", Toast.LENGTH_SHORT).show()
+                                    }
+                                ) {
+                                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy Access Code", tint = AccentBlue)
+                                }
+                            }
+                        }
+
+                        Text(
+                            text = "⚠️ The access code is required for private registration. Share it directly with participants.",
+                            color = SecondaryText,
+                            fontSize = 11.sp
+                        )
+                    }
+
+                    // Native Share Button
+                    OutlinedButton(
+                        onClick = {
+                            TournamentShareHelper.shareTournament(context, tournament)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, AccentBlue)
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = null, tint = AccentBlue)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Share Tournament", color = AccentBlue, fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCreatedSuccessDialog = false
+                        onTournamentCreated(tournament.id)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                ) {
+                    Text("Go to Tournament")
+                }
+            }
+        )
     }
 }
 

@@ -27,11 +27,13 @@ export interface TournamentSettings {
 
 export interface Tournament {
   id: string;
+  publicId?: string;
   hostId: string;
   name: string;
   game: GameType;
   format: TournamentFormat;
   status: TournamentStatus;
+  visibility?: 'public' | 'private';
   maxParticipants: number;
   registrationOpen: boolean;
   drawLocked: boolean;

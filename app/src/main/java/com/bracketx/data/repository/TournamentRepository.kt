@@ -12,6 +12,7 @@ import com.bracketx.domain.model.TournamentParticipant
 import com.bracketx.domain.model.TournamentRole
 import com.bracketx.domain.model.TournamentStatus
 import com.bracketx.domain.model.TournamentStructure
+import com.bracketx.domain.model.TournamentVisibility
 import com.bracketx.domain.state.TournamentEvent
 import com.bracketx.domain.state.TournamentStateMachine
 import kotlinx.coroutines.flow.Flow
@@ -29,7 +30,14 @@ interface TournamentRepository {
     fun getGroups(tournamentId: String): Flow<List<Group>>
     fun getStandings(tournamentId: String): Flow<List<Standing>>
 
-    suspend fun createTournament(tournament: Tournament): Result<Tournament>
+    suspend fun createTournament(tournament: Tournament, privateAccessCode: String? = null): Result<Tournament>
+    suspend fun searchTournamentByPublicId(publicId: String): Result<Tournament?>
+    suspend fun verifyPrivateAccess(tournamentId: String, accessCode: String): Result<Boolean>
+    fun hasPrivateAccess(tournamentId: String): Flow<Boolean>
+    suspend fun updateTournamentVisibility(tournamentId: String, visibility: TournamentVisibility, accessCode: String? = null): Result<Tournament>
+    fun getHostAccessCode(tournamentId: String): String?
+    fun saveHostAccessCode(tournamentId: String, code: String)
+
     suspend fun registerParticipant(registration: Registration): Result<TournamentParticipant>
     suspend fun openRegistration(tournamentId: String): Result<Tournament>
     suspend fun closeRegistration(tournamentId: String): Result<Tournament>
@@ -47,6 +55,8 @@ class InMemoryTournamentRepository : TournamentRepository {
     private val groupsFlow = MutableStateFlow<Map<String, List<Group>>>(emptyMap())
     private val standingsFlow = MutableStateFlow<Map<String, List<Standing>>>(emptyMap())
     private val structuresFlow = MutableStateFlow<Map<String, TournamentStructure>>(emptyMap())
+    private val accessCodes = mutableMapOf<String, String>()
+    private val grantedAccessFlow = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
 
     override fun getTournaments(): Flow<List<Tournament>> = tournamentsFlow.map { it.values.toList() }
 
@@ -67,11 +77,82 @@ class InMemoryTournamentRepository : TournamentRepository {
     override fun getStandings(tournamentId: String): Flow<List<Standing>> =
         standingsFlow.map { it[tournamentId] ?: emptyList() }
 
-    override suspend fun createTournament(tournament: Tournament): Result<Tournament> {
+    override fun getHostAccessCode(tournamentId: String): String? = accessCodes[tournamentId]
+
+    override fun saveHostAccessCode(tournamentId: String, code: String) {
+        accessCodes[tournamentId] = code
+    }
+
+    override suspend fun createTournament(tournament: Tournament, privateAccessCode: String?): Result<Tournament> {
+        val assignedPublicId = if (tournament.publicId.isBlank()) {
+            "BRX-" + UUID.randomUUID().toString().take(6).uppercase()
+        } else {
+            tournament.publicId.uppercase()
+        }
+        val finalTournament = tournament.copy(publicId = assignedPublicId)
         val updated = tournamentsFlow.value.toMutableMap()
-        updated[tournament.id] = tournament
+        updated[finalTournament.id] = finalTournament
         tournamentsFlow.value = updated
-        return Result.success(tournament)
+
+        if (finalTournament.visibility == TournamentVisibility.PRIVATE && !privateAccessCode.isNullOrBlank()) {
+            accessCodes[finalTournament.id] = privateAccessCode.trim().uppercase()
+        }
+        return Result.success(finalTournament)
+    }
+
+    override suspend fun searchTournamentByPublicId(publicId: String): Result<Tournament?> {
+        val clean = publicId.trim().uppercase()
+        val found = tournamentsFlow.value.values.firstOrNull { it.publicId.equals(clean, ignoreCase = true) }
+        return Result.success(found)
+    }
+
+    override suspend fun verifyPrivateAccess(tournamentId: String, accessCode: String): Result<Boolean> {
+        val tournament = tournamentsFlow.value[tournamentId]
+            ?: return Result.failure(IllegalArgumentException("Tournament not found"))
+        if (tournament.visibility != TournamentVisibility.PRIVATE) {
+            return Result.success(true)
+        }
+        val storedCode = accessCodes[tournamentId]
+        val clean = accessCode.trim().uppercase()
+        if (storedCode != null && storedCode == clean) {
+            val currentMap = grantedAccessFlow.value.toMutableMap()
+            val currentSet = currentMap[tournamentId]?.toMutableSet() ?: mutableSetOf()
+            currentSet.add("authorized")
+            currentMap[tournamentId] = currentSet
+            grantedAccessFlow.value = currentMap
+            return Result.success(true)
+        }
+        return Result.failure(IllegalArgumentException("Invalid access code"))
+    }
+
+    override fun hasPrivateAccess(tournamentId: String): Flow<Boolean> {
+        return grantedAccessFlow.map { map ->
+            val set = map[tournamentId] ?: emptySet()
+            set.contains("authorized")
+        }
+    }
+
+    override suspend fun updateTournamentVisibility(
+        tournamentId: String,
+        visibility: TournamentVisibility,
+        accessCode: String?
+    ): Result<Tournament> {
+        val tournament = tournamentsFlow.value[tournamentId]
+            ?: return Result.failure(IllegalArgumentException("Tournament not found"))
+        if (tournament.status != TournamentStatus.DRAFT && tournament.status != TournamentStatus.REGISTRATION_OPEN) {
+            return Result.failure(IllegalStateException("Cannot change visibility after registration closes"))
+        }
+        val updated = tournament.copy(visibility = visibility)
+        val map = tournamentsFlow.value.toMutableMap()
+        map[tournamentId] = updated
+        tournamentsFlow.value = map
+
+        if (visibility == TournamentVisibility.PRIVATE && !accessCode.isNullOrBlank()) {
+            accessCodes[tournamentId] = accessCode.trim().uppercase()
+        } else if (visibility == TournamentVisibility.PUBLIC) {
+            accessCodes.remove(tournamentId)
+        }
+        return Result.success(updated)
     }
 
     override suspend fun registerParticipant(registration: Registration): Result<TournamentParticipant> {

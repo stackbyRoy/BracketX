@@ -18,6 +18,7 @@ export const App: React.FC = () => {
             <Routes>
               <Route path="/" element={<HomePage />} />
               <Route path="/create" element={<CreateTournamentPage />} />
+              <Route path="/t/:id" element={<TournamentDetailPage />} />
               <Route path="/tournament/:id" element={<TournamentDetailPage />} />
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/auth" element={<AuthPage />} />

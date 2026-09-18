@@ -20,7 +20,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Custom Scheme Deep Links (e.g. bracketx://tournament/{id}) -->
+            <!-- Custom Scheme Deep Links (e.g. bracketx://tournament/{id} or bracketx://t/{public_id}) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -28,6 +28,9 @@
                 <data
                     android:scheme="bracketx"
                     android:host="tournament" />
+                <data
+                    android:scheme="bracketx"
+                    android:host="t" />
             </intent-filter>
 
             <!-- Universal Web App Links (Opens app if installed on Android) -->
@@ -35,6 +38,22 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="bracketx.vercel.app"
+                    android:pathPrefix="/t" />
+                <data
+                    android:scheme="https"
+                    android:host="*.vercel.app"
+                    android:pathPrefix="/t" />
+                <data
+                    android:scheme="http"
+                    android:host="bracketx.vercel.app"
+                    android:pathPrefix="/t" />
+                <data
+                    android:scheme="http"
+                    android:host="*.vercel.app"
+                    android:pathPrefix="/t" />
                 <data
                     android:scheme="https"
                     android:host="bracketx.vercel.app"

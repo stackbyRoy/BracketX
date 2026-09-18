@@ -15,6 +15,7 @@ ALTER TABLE public.matches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.standings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.draw_generations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tournament_access_grants ENABLE ROW LEVEL SECURITY;
 
 -- Helper function to check if current user is host of a tournament
 CREATE OR REPLACE FUNCTION public.is_tournament_host(p_tournament_id UUID)
@@ -43,7 +44,12 @@ CREATE POLICY "Users can update their own profile"
 -- 2. Tournaments
 CREATE POLICY "Tournaments are viewable by everyone"
     ON public.tournaments FOR SELECT
-    USING (true);
+    USING (
+        visibility = 'public'
+        OR host_id = (SELECT auth.uid())
+        OR id IN (SELECT tournament_id FROM public.tournament_members WHERE user_id = (SELECT auth.uid()))
+        OR id IN (SELECT tournament_id FROM public.tournament_access_grants WHERE user_id = (SELECT auth.uid()))
+    );
 
 CREATE POLICY "Authenticated users can create tournaments"
     ON public.tournaments FOR INSERT
@@ -73,11 +79,31 @@ CREATE POLICY "Participants can view own registration"
 
 CREATE POLICY "Users can register themselves for tournaments"
     ON public.registrations FOR INSERT
-    WITH CHECK (auth.uid() = user_id);
+    WITH CHECK (
+        auth.uid() = user_id
+        AND EXISTS (
+            SELECT 1 FROM public.tournaments t
+            WHERE t.id = tournament_id
+            AND t.registration_open = true
+            AND (
+                t.visibility = 'public'
+                OR t.host_id = (SELECT auth.uid())
+                OR EXISTS (
+                    SELECT 1 FROM public.tournament_access_grants g
+                    WHERE g.tournament_id = t.id AND g.user_id = (SELECT auth.uid())
+                )
+            )
+        )
+    );
 
 CREATE POLICY "Hosts can update registrations"
     ON public.registrations FOR UPDATE
     USING (public.is_tournament_host(tournament_id));
+
+-- 4b. Tournament Access Grants
+CREATE POLICY "Users can view own access grants"
+    ON public.tournament_access_grants FOR SELECT
+    USING (user_id = (SELECT auth.uid()) OR public.is_tournament_host(tournament_id));
 
 -- 5. Participants
 CREATE POLICY "Participants are viewable by everyone"

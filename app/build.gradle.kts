@@ -12,6 +12,19 @@ android {
     namespace = "com.stackbyroy.bracketx"
     compileSdk = 35
 
+    val localProps = Properties().apply {
+        val localFile = rootProject.file("local.properties")
+        if (localFile.exists()) {
+            localFile.inputStream().use { load(it) }
+        }
+    }
+    val supabaseUrl = localProps.getProperty("supabase.url") ?: "https://cfiraopvfrrvdmqkcwsg.supabase.co"
+    val supabaseAnonKey = localProps.getProperty("supabase.anon.key") ?: ""
+    val webBaseUrl = localProps.getProperty("web.base.url") ?: "https://bracketx.vercel.app"
+    val unityGameId = localProps.getProperty("unity.game.id") ?: "800376608"
+    val unityInterstitialAdUnitId = localProps.getProperty("unity.interstitial.ad.unit.id") ?: "BP_Interstitial_Android"
+    val unityTestModeProp = localProps.getProperty("unity.test.mode")
+
     defaultConfig {
         applicationId = "com.stackbyroy.bracketx"
         minSdk = 26
@@ -19,28 +32,26 @@ android {
         versionCode = 1
         versionName = "1.0.0"
 
-        val localProps = Properties().apply {
-            val localFile = rootProject.file("local.properties")
-            if (localFile.exists()) {
-                localFile.inputStream().use { load(it) }
-            }
-        }
-        val supabaseUrl = localProps.getProperty("supabase.url") ?: "https://cfiraopvfrrvdmqkcwsg.supabase.co"
-        val supabaseAnonKey = localProps.getProperty("supabase.anon.key") ?: ""
-
         buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
+        buildConfigField("String", "WEB_BASE_URL", "\"$webBaseUrl\"")
+        buildConfigField("String", "UNITY_GAME_ID", "\"$unityGameId\"")
+        buildConfigField("String", "UNITY_INTERSTITIAL_AD_UNIT_ID", "\"$unityInterstitialAdUnitId\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
+        debug {
+            buildConfigField("Boolean", "UNITY_TEST_MODE", unityTestModeProp ?: "true")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            buildConfigField("Boolean", "UNITY_TEST_MODE", unityTestModeProp ?: "false")
         }
     }
 
@@ -92,6 +103,9 @@ dependencies {
 
     // Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
+
+    // Unity Ads SDK
+    implementation("com.unity3d.ads:unity-ads:4.12.5")
 
     // Testing
     testImplementation("junit:junit:4.13.2")

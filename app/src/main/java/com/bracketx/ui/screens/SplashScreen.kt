@@ -45,6 +45,7 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun SplashScreen(
+    onAdCheckpoint: () -> Unit = {},
     onSplashFinished: () -> Unit
 ) {
     val logoScale = remember { Animatable(0.65f) }
@@ -112,6 +113,9 @@ fun SplashScreen(
 
         // 4. Hold presentation for optimal pacing (~1250ms total)
         delay(750)
+
+        // Ad readiness evaluation checkpoint (~80% through splash progression)
+        onAdCheckpoint()
 
         // 5. Smooth exit scaling and fade out
         launch {

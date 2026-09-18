@@ -16,6 +16,7 @@ import com.bracketx.domain.model.TournamentFormat
 import com.bracketx.domain.model.TournamentParticipant
 import com.bracketx.domain.model.TournamentStatus
 import com.bracketx.domain.model.TournamentStructure
+import com.bracketx.domain.model.TournamentVisibility
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -31,6 +32,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.security.MessageDigest
 import java.util.UUID
 
 class SupabaseTournamentRepository : TournamentRepository {
@@ -44,6 +46,8 @@ class SupabaseTournamentRepository : TournamentRepository {
     private val matchesState = MutableStateFlow<Map<String, List<Match>>>(emptyMap())
     private val groupsState = MutableStateFlow<Map<String, List<Group>>>(emptyMap())
     private val standingsState = MutableStateFlow<Map<String, List<Standing>>>(emptyMap())
+    private val hostAccessCodes = mutableMapOf<String, String>()
+    private val grantedAccessState = MutableStateFlow<Map<String, Boolean>>(emptyMap())
 
     init {
         // Initial fetch from live Supabase
@@ -66,7 +70,7 @@ class SupabaseTournamentRepository : TournamentRepository {
     override fun getTournaments(): Flow<List<Tournament>> = tournamentsState.map { it.values.toList() }
 
     override fun getTournament(id: String): Flow<Tournament?> = tournamentsState.map { map ->
-        val cached = map[id]
+        val cached = map[id] ?: map.values.firstOrNull { it.publicId.equals(id, ignoreCase = true) }
         if (cached == null) {
             scope.launch { fetchTournamentRemote(id) }
         }
@@ -112,7 +116,21 @@ class SupabaseTournamentRepository : TournamentRepository {
             cached ?: emptyList()
         }
 
-    override suspend fun createTournament(tournament: Tournament): Result<Tournament> {
+    override fun getHostAccessCode(tournamentId: String): String? = hostAccessCodes[tournamentId]
+
+    override fun saveHostAccessCode(tournamentId: String, code: String) {
+        hostAccessCodes[tournamentId] = code
+    }
+
+    override suspend fun createTournament(tournament: Tournament, privateAccessCode: String?): Result<Tournament> {
+        val vis = tournament.visibility.name.lowercase()
+        val codeClean = privateAccessCode?.trim()?.uppercase()
+        val codeHash = if (tournament.visibility == TournamentVisibility.PRIVATE && !codeClean.isNullOrBlank()) {
+            hashSha256(codeClean)
+        } else {
+            null
+        }
+
         val payload = """
             {
                 "id": "${tournament.id}",
@@ -121,27 +139,171 @@ class SupabaseTournamentRepository : TournamentRepository {
                 "game": "${when(tournament.game) { GameType.FC_MOBILE -> "fc_mobile"; GameType.EFOOTBALL -> "efootball" }}",
                 "format": "${when(tournament.format) { TournamentFormat.SINGLE_ELIMINATION -> "knockout"; TournamentFormat.LEAGUE_GROUPS -> "league"; TournamentFormat.GROUPS_KNOCKOUT -> "groups_knockout" }}",
                 "status": "draft",
+                "visibility": "$vis",
+                ${if (codeHash != null) "\"private_access_code_hash\": \"$codeHash\"," else ""}
                 "max_participants": ${tournament.maxParticipants},
                 "registration_open": false,
                 "draw_locked": false
             }
         """.trimIndent()
 
+        if (tournament.visibility == TournamentVisibility.PRIVATE && !codeClean.isNullOrBlank()) {
+            hostAccessCodes[tournament.id] = codeClean
+        }
+
         val result = SupabaseClient.post("/rest/v1/tournaments", payload)
         return result.fold(
-            onSuccess = {
+            onSuccess = { body ->
+                var created = tournament
+                try {
+                    val arr = json.parseToJsonElement(body).jsonArray
+                    val first = arr.firstOrNull()?.jsonObject
+                    if (first != null) {
+                        parseTournament(first)?.let { created = it }
+                    }
+                } catch (_: Exception) {}
+
                 val updated = tournamentsState.value.toMutableMap()
-                updated[tournament.id] = tournament
+                updated[created.id] = created
                 tournamentsState.value = updated
-                Result.success(tournament)
+                Result.success(created)
             },
             onFailure = {
-                // Keep local if backend returns constraint issue
+                val fallbackPublicId = if (tournament.publicId.isBlank()) "BRX-" + UUID.randomUUID().toString().take(6).uppercase() else tournament.publicId
+                val created = tournament.copy(publicId = fallbackPublicId)
                 val updated = tournamentsState.value.toMutableMap()
-                updated[tournament.id] = tournament
+                updated[created.id] = created
                 tournamentsState.value = updated
-                Result.success(tournament)
+                Result.success(created)
             }
+        )
+    }
+
+    override suspend fun searchTournamentByPublicId(publicId: String): Result<Tournament?> {
+        val clean = publicId.trim().uppercase()
+        // Check local cache first
+        val cached = tournamentsState.value.values.firstOrNull { it.publicId.equals(clean, ignoreCase = true) }
+        if (cached != null) {
+            return Result.success(cached)
+        }
+
+        val payload = """{"p_public_id": "${escapeJson(clean)}"}"""
+        val result = SupabaseClient.rpc("resolve_tournament_by_public_id", payload)
+        return result.fold(
+            onSuccess = { body ->
+                try {
+                    val obj = json.parseToJsonElement(body).jsonObject
+                    val found = obj["found"]?.jsonPrimitive?.booleanOrNull ?: false
+                    if (!found) {
+                        return@fold Result.success(null)
+                    }
+
+                    val id = obj["id"]?.jsonPrimitive?.content ?: return@fold Result.success(null)
+                    val hostId = obj["host_id"]?.jsonPrimitive?.content ?: ""
+                    val name = obj["name"]?.jsonPrimitive?.content ?: "Tournament"
+                    val gameStr = obj["game"]?.jsonPrimitive?.content ?: "fc_mobile"
+                    val formatStr = obj["format"]?.jsonPrimitive?.content ?: "knockout"
+                    val statusStr = obj["status"]?.jsonPrimitive?.content ?: "draft"
+                    val maxParticipants = obj["max_participants"]?.jsonPrimitive?.intOrNull ?: 16
+                    val regOpen = obj["registration_open"]?.jsonPrimitive?.booleanOrNull ?: false
+                    val drawLocked = obj["draw_locked"]?.jsonPrimitive?.booleanOrNull ?: false
+                    val visStr = obj["visibility"]?.jsonPrimitive?.content ?: "public"
+                    val pubId = obj["public_id"]?.jsonPrimitive?.content ?: clean
+                    val isAuth = obj["is_authorized"]?.jsonPrimitive?.booleanOrNull ?: false
+
+                    if (isAuth) {
+                        grantedAccessState.value = grantedAccessState.value + (id to true)
+                    }
+
+                    val tournament = Tournament(
+                        id = id,
+                        publicId = pubId,
+                        hostId = hostId,
+                        name = name,
+                        game = if (gameStr.contains("efootball", ignoreCase = true)) GameType.EFOOTBALL else GameType.FC_MOBILE,
+                        format = when (formatStr.lowercase()) {
+                            "league" -> TournamentFormat.LEAGUE_GROUPS
+                            "groups_knockout" -> TournamentFormat.GROUPS_KNOCKOUT
+                            else -> TournamentFormat.SINGLE_ELIMINATION
+                        },
+                        status = when (statusStr.lowercase()) {
+                            "registration_open" -> TournamentStatus.REGISTRATION_OPEN
+                            "registration_closed" -> TournamentStatus.REGISTRATION_CLOSED
+                            "draw_pending" -> TournamentStatus.DRAW_PENDING
+                            "draw_generated" -> TournamentStatus.DRAW_GENERATED
+                            "draw_locked" -> TournamentStatus.DRAW_LOCKED
+                            "in_progress" -> TournamentStatus.IN_PROGRESS
+                            "completed" -> TournamentStatus.COMPLETED
+                            else -> TournamentStatus.DRAFT
+                        },
+                        visibility = TournamentVisibility.fromString(visStr),
+                        maxParticipants = maxParticipants,
+                        registrationOpen = regOpen,
+                        drawLocked = drawLocked
+                    )
+
+                    val map = tournamentsState.value.toMutableMap()
+                    map[id] = tournament
+                    tournamentsState.value = map
+
+                    Result.success(tournament)
+                } catch (e: Exception) {
+                    Result.failure(e)
+                }
+            },
+            onFailure = { err -> Result.failure(err) }
+        )
+    }
+
+    override suspend fun verifyPrivateAccess(tournamentId: String, accessCode: String): Result<Boolean> {
+        val payload = """{"p_tournament_id": "$tournamentId", "p_access_code": "${escapeJson(accessCode.trim())}"}"""
+        val result = SupabaseClient.rpc("verify_private_access", payload)
+        return result.fold(
+            onSuccess = {
+                grantedAccessState.value = grantedAccessState.value + (tournamentId to true)
+                Result.success(true)
+            },
+            onFailure = {
+                Result.failure(IllegalArgumentException("Invalid access code"))
+            }
+        )
+    }
+
+    override fun hasPrivateAccess(tournamentId: String): Flow<Boolean> {
+        return grantedAccessState.map { it[tournamentId] == true }
+    }
+
+    override suspend fun updateTournamentVisibility(
+        tournamentId: String,
+        visibility: TournamentVisibility,
+        accessCode: String?
+    ): Result<Tournament> {
+        val codeClean = accessCode?.trim()?.uppercase()
+        val codeParam = if (visibility == TournamentVisibility.PRIVATE && !codeClean.isNullOrBlank()) {
+            "\"${escapeJson(codeClean)}\""
+        } else "null"
+        val payload = """{"p_tournament_id": "$tournamentId", "p_visibility": "${visibility.name.lowercase()}", "p_access_code": $codeParam}"""
+        val result = SupabaseClient.rpc("update_tournament_visibility", payload)
+
+        return result.fold(
+            onSuccess = {
+                if (visibility == TournamentVisibility.PRIVATE && !codeClean.isNullOrBlank()) {
+                    hostAccessCodes[tournamentId] = codeClean
+                } else if (visibility == TournamentVisibility.PUBLIC) {
+                    hostAccessCodes.remove(tournamentId)
+                }
+                val current = tournamentsState.value[tournamentId]
+                if (current != null) {
+                    val updated = current.copy(visibility = visibility)
+                    val map = tournamentsState.value.toMutableMap()
+                    map[tournamentId] = updated
+                    tournamentsState.value = map
+                    Result.success(updated)
+                } else {
+                    Result.success(Tournament(id = tournamentId, hostId = "", name = "", game = GameType.FC_MOBILE, format = TournamentFormat.SINGLE_ELIMINATION, visibility = visibility))
+                }
+            },
+            onFailure = { err -> Result.failure(err) }
         )
     }
 
@@ -249,27 +411,87 @@ class SupabaseTournamentRepository : TournamentRepository {
             val patch = """{"status": "draw_generated"}"""
             SupabaseClient.patch("/rest/v1/tournaments?id=eq.$tournamentId", patch)
 
-            // Upload generated matches
-            for (match in structure.matches) {
-                val matchPayload = """
-                    {
-                        "id": "${match.id}",
-                        "tournament_id": "$tournamentId",
-                        "stage": "${match.stage.name.lowercase()}",
-                        "round_number": ${match.roundNumber},
-                        "match_number": ${match.matchNumber},
-                        "participant_a": ${match.participantAId?.let { "\"$it\"" } ?: "null"},
-                        "participant_b": ${match.participantBId?.let { "\"$it\"" } ?: "null"},
-                        "score_a": ${match.scoreA ?: "null"},
-                        "score_b": ${match.scoreB ?: "null"},
-                        "winner_id": ${match.winnerId?.let { "\"$it\"" } ?: "null"},
-                        "status": "${match.status.name.lowercase()}",
-                        "next_match_id": ${match.nextMatchId?.let { "\"$it\"" } ?: "null"},
-                        "next_match_slot": ${match.nextMatchSlot?.let { "\"${it.name.lowercase()}\"" } ?: "null"},
-                        "is_bye": ${match.isBye}
+            // Insert groups if groups format
+            if (structure.groups.isNotEmpty()) {
+                val groupArray = structure.groups.joinToString(",") { g ->
+                    """{"id": "${g.id}", "tournament_id": "$tournamentId", "name": "${escapeJson(g.name)}", "group_order": ${g.order}}"""
+                }
+                SupabaseClient.post("/rest/v1/groups", "[$groupArray]")
+
+                // Insert group members
+                val membersList = mutableListOf<String>()
+                structure.groups.forEach { g ->
+                    g.participantIds.forEach { pId ->
+                        membersList.add("""{"id": "${UUID.randomUUID()}", "group_id": "${g.id}", "participant_id": "$pId"}""")
                     }
-                """.trimIndent()
-                SupabaseClient.post("/rest/v1/matches", matchPayload)
+                }
+                if (membersList.isNotEmpty()) {
+                    SupabaseClient.post("/rest/v1/group_members", "[${membersList.joinToString(",")}]")
+                }
+            }
+
+            // Insert standings
+            if (structure.standings.isNotEmpty()) {
+                val standingsArray = structure.standings.joinToString(",") { s ->
+                    """{
+                        "id": "${s.id}",
+                        "tournament_id": "$tournamentId",
+                        "group_id": "${s.groupId}",
+                        "participant_id": "${s.participantId}",
+                        "played": ${s.played},
+                        "wins": ${s.wins},
+                        "draws": ${s.draws},
+                        "losses": ${s.losses},
+                        "goals_for": ${s.goalsFor},
+                        "goals_against": ${s.goalsAgainst},
+                        "goal_difference": ${s.goalDifference},
+                        "points": ${s.points}
+                    }"""
+                }
+                SupabaseClient.post("/rest/v1/standings", "[$standingsArray]")
+            }
+
+            // Insert matches
+            if (structure.matches.isNotEmpty()) {
+                val matchesArray = structure.matches.joinToString(",") { m ->
+                    val stageStr = when(m.stage) {
+                        MatchStage.GROUP -> "group"
+                        MatchStage.ROUND_OF_64 -> "round_of_64"
+                        MatchStage.ROUND_OF_32 -> "round_of_32"
+                        MatchStage.ROUND_OF_16 -> "round_of_16"
+                        MatchStage.QUARTER_FINAL -> "quarter_final"
+                        MatchStage.SEMI_FINAL -> "semi_final"
+                        MatchStage.FINAL -> "final"
+                    }
+                    val nextSlot = when(m.nextMatchSlot) {
+                        MatchSlot.SLOT_A -> "\"slot_a\""
+                        MatchSlot.SLOT_B -> "\"slot_b\""
+                        null -> "null"
+                    }
+                    val pA = if (m.participantAId != null) "\"${m.participantAId}\"" else "null"
+                    val pB = if (m.participantBId != null) "\"${m.participantBId}\"" else "null"
+                    val gId = if (m.groupId != null) "\"${m.groupId}\"" else "null"
+                    val nextMId = if (m.nextMatchId != null) "\"${m.nextMatchId}\"" else "null"
+
+                    """{
+                        "id": "${m.id}",
+                        "tournament_id": "$tournamentId",
+                        "stage": "$stageStr",
+                        "round_number": ${m.roundNumber},
+                        "match_number": ${m.matchNumber},
+                        "group_id": $gId,
+                        "participant_a": $pA,
+                        "participant_b": $pB,
+                        "score_a": null,
+                        "score_b": null,
+                        "winner_id": null,
+                        "status": "scheduled",
+                        "next_match_id": $nextMId,
+                        "next_match_slot": $nextSlot,
+                        "is_bye": ${m.isBye}
+                    }"""
+                }
+                SupabaseClient.post("/rest/v1/matches", "[$matchesArray]")
             }
 
             // Update local state
@@ -277,13 +499,21 @@ class SupabaseTournamentRepository : TournamentRepository {
             tMap[tournamentId] = tournament.copy(status = TournamentStatus.DRAW_GENERATED)
             tournamentsState.value = tMap
 
+            val pMap = participantsState.value.toMutableMap()
+            pMap[tournamentId] = structure.participants
+            participantsState.value = pMap
+
             val mMap = matchesState.value.toMutableMap()
             mMap[tournamentId] = structure.matches
             matchesState.value = mMap
 
-            val pMap = participantsState.value.toMutableMap()
-            pMap[tournamentId] = structure.participants
-            participantsState.value = pMap
+            val gMap = groupsState.value.toMutableMap()
+            gMap[tournamentId] = structure.groups
+            groupsState.value = gMap
+
+            val sMap = standingsState.value.toMutableMap()
+            sMap[tournamentId] = structure.standings
+            standingsState.value = sMap
 
             Result.success(structure)
         } catch (e: Exception) {
@@ -292,15 +522,7 @@ class SupabaseTournamentRepository : TournamentRepository {
     }
 
     override suspend fun lockDraw(tournamentId: String): Result<Tournament> {
-        // Try calling atomic RPC on Supabase
-        val rpcPayload = """{"p_tournament_id": "$tournamentId"}"""
-        val rpcResult = SupabaseClient.rpc("lock_tournament_draw", rpcPayload)
-
-        if (rpcResult.isFailure) {
-            // Direct patch fallback
-            val patch = """{"status": "draw_locked", "draw_locked": true}"""
-            SupabaseClient.patch("/rest/v1/tournaments?id=eq.$tournamentId", patch)
-        }
+        val result = SupabaseClient.rpc("lock_tournament_draw", """{"p_tournament_id": "$tournamentId"}""")
 
         val tournament = tournamentsState.value[tournamentId]
         val updated = tournament?.copy(status = TournamentStatus.DRAW_LOCKED, drawLocked = true)
@@ -309,6 +531,7 @@ class SupabaseTournamentRepository : TournamentRepository {
         val map = tournamentsState.value.toMutableMap()
         map[tournamentId] = updated
         tournamentsState.value = map
+
         return Result.success(updated)
     }
 
@@ -319,11 +542,6 @@ class SupabaseTournamentRepository : TournamentRepository {
         scoreB: Int,
         isOverride: Boolean
     ): Result<List<Match>> {
-        val currentMatches = matchesState.value[tournamentId] ?: emptyList()
-        val tournament = tournamentsState.value[tournamentId]
-            ?: return Result.failure(IllegalArgumentException("Tournament not found"))
-
-        // Try calling server-side atomic RPC function
         val rpcPayload = """
             {
                 "p_tournament_id": "$tournamentId",
@@ -336,7 +554,11 @@ class SupabaseTournamentRepository : TournamentRepository {
 
         SupabaseClient.rpc("submit_match_result", rpcPayload)
 
-        // Run local domain progression to ensure state is immediately consistent
+        // Local state update
+        val currentMatches = matchesState.value[tournamentId] ?: emptyList()
+        val tournament = tournamentsState.value[tournamentId]
+            ?: Tournament(id = tournamentId, hostId = "", name = "", game = GameType.FC_MOBILE, format = TournamentFormat.SINGLE_ELIMINATION)
+
         val (updatedMatches, nextStatus) = TournamentEngine.submitScore(
             tournament = tournament,
             currentMatches = currentMatches,
@@ -346,7 +568,6 @@ class SupabaseTournamentRepository : TournamentRepository {
             isHostOverride = isOverride
         )
 
-        // Update local state
         val mMap = matchesState.value.toMutableMap()
         mMap[tournamentId] = updatedMatches
         matchesState.value = mMap
@@ -355,6 +576,23 @@ class SupabaseTournamentRepository : TournamentRepository {
             val tMap = tournamentsState.value.toMutableMap()
             tMap[tournamentId] = tournament.copy(status = nextStatus)
             tournamentsState.value = tMap
+        }
+
+        // Recalculate standings locally
+        val modifiedMatch = updatedMatches.firstOrNull { it.id == matchId }
+        if (modifiedMatch?.groupId != null) {
+            val group = groupsState.value[tournamentId]?.firstOrNull { it.id == modifiedMatch.groupId }
+            if (group != null) {
+                val updatedStandings = TournamentEngine.recalculateGroupStandings(
+                    tournament = tournament,
+                    groupId = group.id,
+                    participantIds = group.participantIds,
+                    matches = updatedMatches
+                )
+                val sMap = standingsState.value.toMutableMap()
+                sMap[tournamentId] = updatedStandings
+                standingsState.value = sMap
+            }
         }
 
         return Result.success(updatedMatches)
@@ -370,8 +608,13 @@ class SupabaseTournamentRepository : TournamentRepository {
                     val map = tournamentsState.value.toMutableMap()
                     map[t.id] = t
                     tournamentsState.value = map
+                } else {
+                    // Try looking up by public_id if not found by UUID
+                    searchTournamentByPublicId(id)
                 }
             } catch (_: Exception) {}
+        }.onFailure {
+            searchTournamentByPublicId(id)
         }
     }
 
@@ -429,17 +672,20 @@ class SupabaseTournamentRepository : TournamentRepository {
 
     private fun parseTournament(obj: JsonObject): Tournament? {
         val id = obj["id"]?.jsonPrimitive?.content ?: return null
+        val publicId = obj["public_id"]?.jsonPrimitive?.content ?: ""
         val hostId = obj["host_id"]?.jsonPrimitive?.content ?: ""
         val name = obj["name"]?.jsonPrimitive?.content ?: "Tournament"
         val gameStr = obj["game"]?.jsonPrimitive?.content ?: "fc_mobile"
         val formatStr = obj["format"]?.jsonPrimitive?.content ?: "knockout"
         val statusStr = obj["status"]?.jsonPrimitive?.content ?: "draft"
+        val visibilityStr = obj["visibility"]?.jsonPrimitive?.content ?: "public"
         val maxParticipants = obj["max_participants"]?.jsonPrimitive?.intOrNull ?: 16
         val regOpen = obj["registration_open"]?.jsonPrimitive?.booleanOrNull ?: false
         val drawLocked = obj["draw_locked"]?.jsonPrimitive?.booleanOrNull ?: false
 
         return Tournament(
             id = id,
+            publicId = publicId,
             hostId = hostId,
             name = name,
             game = if (gameStr.contains("efootball", ignoreCase = true)) GameType.EFOOTBALL else GameType.FC_MOBILE,
@@ -458,6 +704,7 @@ class SupabaseTournamentRepository : TournamentRepository {
                 "completed" -> TournamentStatus.COMPLETED
                 else -> TournamentStatus.DRAFT
             },
+            visibility = TournamentVisibility.fromString(visibilityStr),
             maxParticipants = maxParticipants,
             registrationOpen = regOpen,
             drawLocked = drawLocked
@@ -571,6 +818,12 @@ class SupabaseTournamentRepository : TournamentRepository {
             goalDifference = gd,
             points = pts
         )
+    }
+
+    private fun hashSha256(text: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val bytes = digest.digest(text.toByteArray(Charsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
     }
 
     private fun escapeJson(str: String): String {

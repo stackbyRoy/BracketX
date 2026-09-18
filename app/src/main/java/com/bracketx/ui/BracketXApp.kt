@@ -56,14 +56,16 @@ fun BracketXApp(
 ) {
     val currentUser by RepositoryProvider.authRepository.currentUser.collectAsState()
 
-    // Parse incoming deep link intent
     val deepLinkTournamentId = remember(incomingIntent) {
         incomingIntent?.data?.let { uri ->
             when {
-                uri.scheme == "bracketx" && uri.host == "tournament" -> {
+                uri.scheme == "bracketx" && (uri.host == "tournament" || uri.host == "t") -> {
                     uri.pathSegments.firstOrNull() ?: uri.lastPathSegment
                 }
                 uri.path?.contains("/tournament/") == true -> {
+                    uri.lastPathSegment
+                }
+                uri.path?.contains("/t/") == true -> {
                     uri.lastPathSegment
                 }
                 else -> null
@@ -216,6 +218,11 @@ fun BracketXApp(
                 route = Screen.TournamentDetail.route,
                 arguments = listOf(navArgument("tournamentId") { type = NavType.StringType }),
                 deepLinks = listOf(
+                    navDeepLink { uriPattern = "https://bracketx.vercel.app/t/{tournamentId}" },
+                    navDeepLink { uriPattern = "https://*.vercel.app/t/{tournamentId}" },
+                    navDeepLink { uriPattern = "http://bracketx.vercel.app/t/{tournamentId}" },
+                    navDeepLink { uriPattern = "http://*.vercel.app/t/{tournamentId}" },
+                    navDeepLink { uriPattern = "bracketx://t/{tournamentId}" },
                     navDeepLink { uriPattern = "https://bracketx.vercel.app/tournament/{tournamentId}" },
                     navDeepLink { uriPattern = "https://*.vercel.app/tournament/{tournamentId}" },
                     navDeepLink { uriPattern = "http://bracketx.vercel.app/tournament/{tournamentId}" },

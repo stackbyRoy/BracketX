@@ -25,14 +25,41 @@ export const api = {
   },
 
   async getTournament(id: string): Promise<Tournament | null> {
-    const { data, error } = await supabase
+    const clean = id.trim();
+    const isPublicId = clean.toUpperCase().startsWith('BRX-');
+    if (isPublicId) {
+      const { data } = await supabase
+        .from('tournaments')
+        .select('*')
+        .ilike('public_id', clean)
+        .maybeSingle();
+
+      if (data) return mapTournament(data);
+
+      const { data: rpcData } = await supabase.rpc('resolve_tournament_by_public_id', {
+        p_public_id: clean,
+      });
+      if (rpcData && rpcData.found) {
+        return mapTournament(rpcData);
+      }
+      return null;
+    }
+
+    const { data } = await supabase
       .from('tournaments')
       .select('*')
-      .eq('id', id)
-      .single();
+      .eq('id', clean)
+      .maybeSingle();
 
-    if (error) return null;
-    return mapTournament(data);
+    if (data) return mapTournament(data);
+
+    const { data: rpcData } = await supabase.rpc('resolve_tournament_by_public_id', {
+      p_public_id: clean,
+    });
+    if (rpcData && rpcData.found) {
+      return mapTournament(rpcData);
+    }
+    return null;
   },
 
   async createTournament(t: Partial<Tournament>): Promise<Tournament> {
@@ -271,17 +298,19 @@ export const api = {
 function mapTournament(raw: any): Tournament {
   return {
     id: raw.id,
-    hostId: raw.host_id,
+    publicId: raw.public_id || raw.publicId || '',
+    hostId: raw.host_id || raw.hostId || '',
     name: raw.name,
     game: raw.game,
     format: raw.format,
     status: raw.status,
-    maxParticipants: raw.max_participants || 32,
-    registrationOpen: raw.registration_open,
-    drawLocked: raw.draw_locked,
+    visibility: raw.visibility || 'public',
+    maxParticipants: raw.max_participants || raw.maxParticipants || 32,
+    registrationOpen: raw.registration_open ?? raw.registrationOpen ?? false,
+    drawLocked: raw.draw_locked ?? raw.drawLocked ?? false,
     settings: raw.settings || {},
-    createdAt: raw.created_at,
-    updatedAt: raw.updated_at,
+    createdAt: raw.created_at || raw.createdAt,
+    updatedAt: raw.updated_at || raw.updatedAt,
   };
 }
 

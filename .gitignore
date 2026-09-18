@@ -1,26 +1,79 @@
+# ====================================================================
+# BracketX .gitignore
+# ====================================================================
+
+# --------------------------------------------------------------------
 # Gradle & Android Build Artifacts
+# --------------------------------------------------------------------
 *.iml
-.gradle
+.gradle/
+build/
+**/build/
 /local.properties
-/.idea/
-.DS_Store
-/build
-/app/build
-/tournament-engine/build
 captures/
-.externalNativeBuild
+.externalNativeBuild/
 .cxx/
 *.apk
 *.aab
+*.dex
+*.class
+*.hprof
+.attach_pid*
 
-# Node & Web
-web/node_modules/
+# --------------------------------------------------------------------
+# Node & Web Frontend Artifacts
+# --------------------------------------------------------------------
+node_modules/
+**/node_modules/
+dist/
+**/dist/
 web/dist/
+web/.tmp/
+.tmp/
+.vite/
+**/web/.vite/
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment and local configs
+.env
+.env.local
+.env.*.local
 web/.env
 web/.env.local
 web/.env.*.local
-web/.tmp/
+!.env.example
 
-# IDE & OS
+# --------------------------------------------------------------------
+# Keystores & Signing Secrets
+# --------------------------------------------------------------------
+*.jks
+*.keystore
+*.key
+*.p8
+*.p12
+
+# --------------------------------------------------------------------
+# IDE & Operating System Files
+# --------------------------------------------------------------------
+.idea/
+*.ipr
+*.iws
+out/
 .vscode/
+.DS_Store
 Thumbs.db
+ehthumbs.db
+desktop.ini
+*.swp
+*~
+
+# --------------------------------------------------------------------
+# Agent & AI Tooling Artifacts
+# --------------------------------------------------------------------
+.agents/
+skills-lock.json
+.gemini/

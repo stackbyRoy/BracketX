@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.bracketx.ads.AdsProvider
 import com.bracketx.data.repository.RepositoryProvider
 import com.bracketx.ui.BracketXApp
 import com.bracketx.ui.screens.SplashScreen
@@ -22,6 +23,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         RepositoryProvider.init(applicationContext)
+        AdsProvider.init(applicationContext)
         incomingIntent.value = intent
 
         setContent {
@@ -35,6 +37,13 @@ class MainActivity : ComponentActivity() {
                 ) { isSplash ->
                     if (isSplash) {
                         SplashScreen(
+                            onAdCheckpoint = {
+                                if (AdsProvider.interstitialProvider.shouldShowLaunchAd()) {
+                                    AdsProvider.interstitialProvider.show(this@MainActivity) {
+                                        showSplash = false
+                                    }
+                                }
+                            },
                             onSplashFinished = {
                                 showSplash = false
                             }

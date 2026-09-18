@@ -98,3 +98,27 @@ fun BandBadge(band: CompetitiveBand?, modifier: Modifier = Modifier) {
         )
     }
 }
+
+@Composable
+fun VisibilityBadge(visibility: com.bracketx.domain.model.TournamentVisibility, modifier: Modifier = Modifier) {
+    val (bgColor, textColor, text) = when (visibility) {
+        com.bracketx.domain.model.TournamentVisibility.PUBLIC -> Triple(AccentBlue.copy(alpha = 0.15f), AccentBlue, "PUBLIC")
+        com.bracketx.domain.model.TournamentVisibility.PRIVATE -> Triple(Color(0xFFFF9800).copy(alpha = 0.15f), Color(0xFFFFB74D), "PRIVATE")
+    }
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(bgColor)
+            .border(1.dp, bgColor.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    ) {
+        Text(
+            text = text,
+            color = textColor,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.5.sp
+        )
+    }
+}

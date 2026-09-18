@@ -33,6 +33,7 @@ CREATE TRIGGER on_auth_user_created
 -- 2. Tournaments
 CREATE TABLE IF NOT EXISTS public.tournaments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    public_id TEXT NOT NULL UNIQUE,
     host_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     game TEXT NOT NULL CHECK (game IN ('fc_mobile', 'efootball')),
@@ -40,6 +41,8 @@ CREATE TABLE IF NOT EXISTS public.tournaments (
     status TEXT NOT NULL DEFAULT 'draft' CHECK (
         status IN ('draft', 'registration_open', 'registration_closed', 'draw_pending', 'draw_generated', 'draw_locked', 'in_progress', 'completed')
     ),
+    visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'private')),
+    private_access_code_hash TEXT NULL,
     max_participants INTEGER DEFAULT 16,
     registration_open BOOLEAN DEFAULT false,
     draw_locked BOOLEAN DEFAULT false,
@@ -47,6 +50,52 @@ CREATE TABLE IF NOT EXISTS public.tournaments (
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Function to generate readable, unique public_id (BRX-XXXXXX)
+CREATE OR REPLACE FUNCTION public.generate_tournament_public_id()
+RETURNS TEXT AS $$
+DECLARE
+    v_chars TEXT := '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+    v_result TEXT;
+    v_length INT := 6;
+    v_i INT;
+    v_exists BOOLEAN;
+BEGIN
+    LOOP
+        v_result := 'BRX-';
+        FOR v_i IN 1..v_length LOOP
+            v_result := v_result || substr(v_chars, floor(random() * length(v_chars) + 1)::int, 1);
+        END LOOP;
+
+        SELECT EXISTS (
+            SELECT 1 FROM public.tournaments WHERE upper(public_id) = upper(v_result)
+        ) INTO v_exists;
+
+        EXIT WHEN NOT v_exists;
+    END LOOP;
+
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+-- Trigger to assign public_id if not supplied on insert
+CREATE OR REPLACE FUNCTION public.trg_assign_tournament_public_id()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.public_id IS NULL OR trim(NEW.public_id) = '' THEN
+        NEW.public_id := public.generate_tournament_public_id();
+    ELSE
+        NEW.public_id := upper(trim(NEW.public_id));
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_before_insert_tournaments_public_id ON public.tournaments;
+CREATE TRIGGER trg_before_insert_tournaments_public_id
+    BEFORE INSERT ON public.tournaments
+    FOR EACH ROW
+    EXECUTE FUNCTION public.trg_assign_tournament_public_id();
 
 -- 3. Tournament Members
 CREATE TABLE IF NOT EXISTS public.tournament_members (
@@ -177,9 +226,21 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- 12. Tournament Access Grants (for private tournaments)
+CREATE TABLE IF NOT EXISTS public.tournament_access_grants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tournament_id UUID NOT NULL REFERENCES public.tournaments(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    granted_at TIMESTAMPTZ DEFAULT now(),
+    CONSTRAINT unique_tournament_user_grant UNIQUE (tournament_id, user_id)
+);
+
 -- Performance Indexes
 CREATE INDEX IF NOT EXISTS idx_tournaments_host ON public.tournaments(host_id);
 CREATE INDEX IF NOT EXISTS idx_tournaments_status ON public.tournaments(status);
+CREATE INDEX IF NOT EXISTS idx_tournaments_public_id ON public.tournaments(upper(public_id));
+CREATE INDEX IF NOT EXISTS idx_tournaments_visibility ON public.tournaments(visibility);
+CREATE INDEX IF NOT EXISTS idx_tournament_access_grants_user_tournament ON public.tournament_access_grants (user_id, tournament_id);
 CREATE INDEX IF NOT EXISTS idx_registrations_tournament ON public.registrations(tournament_id);
 CREATE INDEX IF NOT EXISTS idx_participants_tournament ON public.participants(tournament_id);
 CREATE INDEX IF NOT EXISTS idx_matches_tournament ON public.matches(tournament_id);
@@ -230,7 +291,13 @@ CREATE POLICY "Users can update their own profile" ON public.profiles FOR UPDATE
 
 -- Tournaments Policies
 DROP POLICY IF EXISTS "Tournaments are viewable by everyone" ON public.tournaments;
-CREATE POLICY "Tournaments are viewable by everyone" ON public.tournaments FOR SELECT USING (true);
+CREATE POLICY "Tournaments are viewable by everyone" ON public.tournaments FOR SELECT
+    USING (
+        visibility = 'public'
+        OR host_id = (SELECT auth.uid())
+        OR id IN (SELECT tournament_id FROM public.tournament_members WHERE user_id = (SELECT auth.uid()))
+        OR id IN (SELECT tournament_id FROM public.tournament_access_grants WHERE user_id = (SELECT auth.uid()))
+    );
 
 DROP POLICY IF EXISTS "Authenticated users can create tournaments" ON public.tournaments;
 CREATE POLICY "Authenticated users can create tournaments" ON public.tournaments FOR INSERT WITH CHECK (auth.uid() = host_id);
@@ -246,10 +313,31 @@ DROP POLICY IF EXISTS "Participants can view own registration" ON public.registr
 CREATE POLICY "Participants can view own registration" ON public.registrations FOR SELECT USING (auth.uid() = user_id OR public.is_tournament_host(tournament_id));
 
 DROP POLICY IF EXISTS "Users can register themselves for tournaments" ON public.registrations;
-CREATE POLICY "Users can register themselves for tournaments" ON public.registrations FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can register themselves for tournaments" ON public.registrations FOR INSERT
+    WITH CHECK (
+        auth.uid() = user_id
+        AND EXISTS (
+            SELECT 1 FROM public.tournaments t
+            WHERE t.id = tournament_id
+            AND t.registration_open = true
+            AND (
+                t.visibility = 'public'
+                OR t.host_id = (SELECT auth.uid())
+                OR EXISTS (
+                    SELECT 1 FROM public.tournament_access_grants g
+                    WHERE g.tournament_id = t.id AND g.user_id = (SELECT auth.uid())
+                )
+            )
+        )
+    );
 
 DROP POLICY IF EXISTS "Hosts can update registrations" ON public.registrations;
 CREATE POLICY "Hosts can update registrations" ON public.registrations FOR UPDATE USING (public.is_tournament_host(tournament_id));
+
+-- Tournament Access Grants Policies
+DROP POLICY IF EXISTS "Users can view own access grants" ON public.tournament_access_grants;
+CREATE POLICY "Users can view own access grants" ON public.tournament_access_grants FOR SELECT
+    USING (user_id = (SELECT auth.uid()) OR public.is_tournament_host(tournament_id));
 
 -- Participants Policies
 DROP POLICY IF EXISTS "Participants are viewable by everyone" ON public.participants;
@@ -479,3 +567,195 @@ BEGIN
     RETURN jsonb_build_object('success', true, 'tournament_id', p_tournament_id);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 4. Resolve Tournament by Public ID (Deterministic, Case-Insensitive, Safe)
+CREATE OR REPLACE FUNCTION public.resolve_tournament_by_public_id(p_public_id TEXT)
+RETURNS JSONB AS $$
+DECLARE
+    v_norm_id TEXT := upper(trim(p_public_id));
+    v_t RECORD;
+    v_registered_count INT;
+    v_is_registered BOOLEAN := false;
+    v_is_authorized BOOLEAN := false;
+    v_caller_id UUID := auth.uid();
+BEGIN
+    SELECT * INTO v_t
+    FROM public.tournaments
+    WHERE upper(public_id) = v_norm_id;
+
+    IF v_t.id IS NULL THEN
+        RETURN jsonb_build_object('found', false);
+    END IF;
+
+    SELECT COUNT(*) INTO v_registered_count
+    FROM public.participants
+    WHERE tournament_id = v_t.id;
+
+    IF v_caller_id IS NOT NULL THEN
+        SELECT EXISTS (
+            SELECT 1 FROM public.registrations
+            WHERE tournament_id = v_t.id AND user_id = v_caller_id
+        ) INTO v_is_registered;
+
+        IF v_t.visibility = 'public' OR v_t.host_id = v_caller_id THEN
+            v_is_authorized := true;
+        ELSE
+            SELECT EXISTS (
+                SELECT 1 FROM public.tournament_access_grants
+                WHERE tournament_id = v_t.id AND user_id = v_caller_id
+            ) INTO v_is_authorized;
+        END IF;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'found', true,
+        'id', v_t.id,
+        'public_id', v_t.public_id,
+        'host_id', v_t.host_id,
+        'name', v_t.name,
+        'game', v_t.game,
+        'format', v_t.format,
+        'status', v_t.status,
+        'max_participants', v_t.max_participants,
+        'registration_open', v_t.registration_open,
+        'draw_locked', v_t.draw_locked,
+        'visibility', v_t.visibility,
+        'created_at', v_t.created_at,
+        'participant_count', v_registered_count,
+        'is_registered', v_is_registered,
+        'is_authorized', v_is_authorized
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- 5. Verify Private Access Code & Issue Access Grant
+CREATE OR REPLACE FUNCTION public.verify_private_access(
+    p_tournament_id UUID,
+    p_access_code TEXT
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_t RECORD;
+    v_code_clean TEXT := upper(trim(p_access_code));
+    v_code_hash TEXT;
+    v_caller_id UUID := auth.uid();
+    v_already_registered BOOLEAN;
+    v_count INT;
+BEGIN
+    IF v_caller_id IS NULL THEN
+        RAISE EXCEPTION 'Unauthorized: Authentication required.';
+    END IF;
+
+    SELECT * INTO v_t
+    FROM public.tournaments
+    WHERE id = p_tournament_id;
+
+    IF v_t.id IS NULL THEN
+        RAISE EXCEPTION 'Tournament not found.';
+    END IF;
+
+    IF v_t.visibility != 'private' THEN
+        RETURN jsonb_build_object('success', true, 'message', 'Tournament is public, no code required.');
+    END IF;
+
+    IF v_t.host_id = v_caller_id THEN
+        RETURN jsonb_build_object('success', true, 'message', 'Host authorized.');
+    END IF;
+
+    IF NOT v_t.registration_open OR v_t.status != 'registration_open' THEN
+        RAISE EXCEPTION 'Registration is not currently open for this tournament.';
+    END IF;
+
+    SELECT COUNT(*) INTO v_count FROM public.participants WHERE tournament_id = p_tournament_id;
+    IF v_count >= v_t.max_participants THEN
+        RAISE EXCEPTION 'Tournament capacity reached.';
+    END IF;
+
+    SELECT EXISTS (
+        SELECT 1 FROM public.registrations WHERE tournament_id = p_tournament_id AND user_id = v_caller_id
+    ) INTO v_already_registered;
+
+    IF v_already_registered THEN
+        RAISE EXCEPTION 'User is already registered for this tournament.';
+    END IF;
+
+    v_code_hash := encode(sha256(v_code_clean::bytea), 'hex');
+    IF v_t.private_access_code_hash IS NULL OR v_t.private_access_code_hash != v_code_hash THEN
+        RAISE EXCEPTION 'Invalid access code.';
+    END IF;
+
+    INSERT INTO public.tournament_access_grants (tournament_id, user_id)
+    VALUES (p_tournament_id, v_caller_id)
+    ON CONFLICT (tournament_id, user_id) DO UPDATE
+    SET granted_at = now();
+
+    INSERT INTO public.audit_logs (tournament_id, actor_id, action, entity_type, entity_id)
+    VALUES (p_tournament_id, v_caller_id, 'PRIVATE_ACCESS_GRANTED', 'tournament', p_tournament_id);
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'tournament_id', p_tournament_id,
+        'message', 'Access granted.'
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- 6. Update Tournament Visibility (Host only, restricted lifecycle)
+CREATE OR REPLACE FUNCTION public.update_tournament_visibility(
+    p_tournament_id UUID,
+    p_visibility TEXT,
+    p_access_code TEXT DEFAULT NULL
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_t RECORD;
+    v_caller_id UUID := auth.uid();
+    v_code_hash TEXT := NULL;
+BEGIN
+    IF v_caller_id IS NULL THEN
+        RAISE EXCEPTION 'Unauthorized.';
+    END IF;
+
+    SELECT * INTO v_t FROM public.tournaments WHERE id = p_tournament_id;
+    IF v_t.id IS NULL THEN
+        RAISE EXCEPTION 'Tournament not found.';
+    END IF;
+
+    IF v_t.host_id != v_caller_id THEN
+        RAISE EXCEPTION 'Unauthorized: Only the host can update tournament visibility.';
+    END IF;
+
+    IF v_t.status NOT IN ('draft', 'registration_open') THEN
+        RAISE EXCEPTION 'Tournament visibility cannot be changed after registration closes.';
+    END IF;
+
+    IF p_visibility NOT IN ('public', 'private') THEN
+        RAISE EXCEPTION 'Invalid visibility value. Must be public or private.';
+    END IF;
+
+    IF p_visibility = 'private' THEN
+        IF p_access_code IS NULL OR length(trim(p_access_code)) < 4 THEN
+            RAISE EXCEPTION 'Private tournaments require a valid access code (min 4 characters).';
+        END IF;
+        v_code_hash := encode(sha256(upper(trim(p_access_code))::bytea), 'hex');
+    END IF;
+
+    UPDATE public.tournaments
+    SET visibility = p_visibility,
+        private_access_code_hash = v_code_hash,
+        updated_at = now()
+    WHERE id = p_tournament_id;
+
+    INSERT INTO public.audit_logs (tournament_id, actor_id, action, entity_type, entity_id, metadata)
+    VALUES (
+        p_tournament_id,
+        v_caller_id,
+        'VISIBILITY_UPDATED',
+        'tournament',
+        p_tournament_id,
+        jsonb_build_object('visibility', p_visibility)
+    );
+
+    RETURN jsonb_build_object('success', true, 'visibility', p_visibility);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;

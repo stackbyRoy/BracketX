@@ -30,6 +30,7 @@ CREATE TRIGGER on_auth_user_created
 -- 2. Tournaments
 CREATE TABLE IF NOT EXISTS public.tournaments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    public_id TEXT NOT NULL UNIQUE,
     host_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     game TEXT NOT NULL CHECK (game IN ('fc_mobile', 'efootball')),
@@ -37,6 +38,8 @@ CREATE TABLE IF NOT EXISTS public.tournaments (
     status TEXT NOT NULL DEFAULT 'draft' CHECK (
         status IN ('draft', 'registration_open', 'registration_closed', 'draw_pending', 'draw_generated', 'draw_locked', 'in_progress', 'completed')
     ),
+    visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'private')),
+    private_access_code_hash TEXT NULL,
     max_participants INTEGER DEFAULT 16,
     registration_open BOOLEAN DEFAULT false,
     draw_locked BOOLEAN DEFAULT false,
@@ -44,6 +47,52 @@ CREATE TABLE IF NOT EXISTS public.tournaments (
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Function to generate readable, unique public_id (BRX-XXXXXX)
+CREATE OR REPLACE FUNCTION public.generate_tournament_public_id()
+RETURNS TEXT AS $$
+DECLARE
+    v_chars TEXT := '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+    v_result TEXT;
+    v_length INT := 6;
+    v_i INT;
+    v_exists BOOLEAN;
+BEGIN
+    LOOP
+        v_result := 'BRX-';
+        FOR v_i IN 1..v_length LOOP
+            v_result := v_result || substr(v_chars, floor(random() * length(v_chars) + 1)::int, 1);
+        END LOOP;
+
+        SELECT EXISTS (
+            SELECT 1 FROM public.tournaments WHERE upper(public_id) = upper(v_result)
+        ) INTO v_exists;
+
+        EXIT WHEN NOT v_exists;
+    END LOOP;
+
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+-- Trigger to assign public_id if not supplied on insert
+CREATE OR REPLACE FUNCTION public.trg_assign_tournament_public_id()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.public_id IS NULL OR trim(NEW.public_id) = '' THEN
+        NEW.public_id := public.generate_tournament_public_id();
+    ELSE
+        NEW.public_id := upper(trim(NEW.public_id));
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_before_insert_tournaments_public_id ON public.tournaments;
+CREATE TRIGGER trg_before_insert_tournaments_public_id
+    BEFORE INSERT ON public.tournaments
+    FOR EACH ROW
+    EXECUTE FUNCTION public.trg_assign_tournament_public_id();
 
 -- 3. Tournament Members
 CREATE TABLE IF NOT EXISTS public.tournament_members (
@@ -174,9 +223,21 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- 12. Tournament Access Grants (for private tournaments)
+CREATE TABLE IF NOT EXISTS public.tournament_access_grants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tournament_id UUID NOT NULL REFERENCES public.tournaments(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    granted_at TIMESTAMPTZ DEFAULT now(),
+    CONSTRAINT unique_tournament_user_grant UNIQUE (tournament_id, user_id)
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_tournaments_host ON public.tournaments(host_id);
 CREATE INDEX IF NOT EXISTS idx_tournaments_status ON public.tournaments(status);
+CREATE INDEX IF NOT EXISTS idx_tournaments_public_id ON public.tournaments(upper(public_id));
+CREATE INDEX IF NOT EXISTS idx_tournaments_visibility ON public.tournaments(visibility);
+CREATE INDEX IF NOT EXISTS idx_tournament_access_grants_user_tournament ON public.tournament_access_grants (user_id, tournament_id);
 CREATE INDEX IF NOT EXISTS idx_registrations_tournament ON public.registrations(tournament_id);
 CREATE INDEX IF NOT EXISTS idx_participants_tournament ON public.participants(tournament_id);
 CREATE INDEX IF NOT EXISTS idx_matches_tournament ON public.matches(tournament_id);

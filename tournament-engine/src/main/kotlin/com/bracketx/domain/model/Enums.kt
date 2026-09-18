@@ -63,3 +63,17 @@ enum class TournamentRole {
     HOST,
     PARTICIPANT
 }
+
+@Serializable
+enum class TournamentVisibility(val displayName: String, val description: String) {
+    PUBLIC("Public", "Anyone can discover and register."),
+    PRIVATE("Private", "Tournament is not publicly listed and requires an access code.");
+
+    companion object {
+        fun fromString(value: String): TournamentVisibility = when (value.lowercase()) {
+            "public" -> PUBLIC
+            "private" -> PRIVATE
+            else -> PUBLIC
+        }
+    }
+}

@@ -33,11 +33,13 @@ data class TournamentSettings(
 @Serializable
 data class Tournament(
     val id: String,
+    val publicId: String = "",
     val hostId: String,
     val name: String,
     val game: GameType,
     val format: TournamentFormat,
     val status: TournamentStatus = TournamentStatus.DRAFT,
+    val visibility: TournamentVisibility = TournamentVisibility.PUBLIC,
     val maxParticipants: Int = 32,
     val registrationOpen: Boolean = false,
     val drawLocked: Boolean = false,
