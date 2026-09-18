@@ -17,13 +17,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -41,6 +47,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -127,6 +134,9 @@ fun TournamentDetailScreen(
     var showPrivateAccessDialog by remember { mutableStateOf(false) }
     var showDrawPreviewDialog by remember { mutableStateOf(false) }
     var showChangeVisibilityDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showManageRulesDialog by remember { mutableStateOf(false) }
+    var isDeletingTournament by remember { mutableStateOf(false) }
     var selectedMatchForScoring by remember { mutableStateOf<Match?>(null) }
     var previewFairnessScore by remember { mutableStateOf<FairnessScore?>(null) }
 
@@ -179,6 +189,15 @@ fun TournamentDetailScreen(
                             contentDescription = "Share Tournament",
                             tint = AccentBlue
                         )
+                    }
+                    if (isHost) {
+                        IconButton(onClick = { showDeleteConfirmDialog = true }) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete Tournament",
+                                tint = ErrorRed
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = BackgroundDark)
@@ -471,7 +490,9 @@ fun TournamentDetailScreen(
                     participants = participants,
                     isHost = isHost,
                     hostAccessCode = hostSavedCode,
-                    onChangeVisibility = { showChangeVisibilityDialog = true }
+                    onChangeVisibility = { showChangeVisibilityDialog = true },
+                    onDeleteTournament = { showDeleteConfirmDialog = true },
+                    onManageRules = { showManageRulesDialog = true }
                 )
                 "Bracket" -> {
                     BracketView(
@@ -577,6 +598,66 @@ fun TournamentDetailScreen(
                 OutlinedButton(
                     onClick = { showPrivateAccessDialog = false },
                     enabled = !isVerifyingCode
+                ) {
+                    Text("Cancel", color = SecondaryText)
+                }
+            }
+        )
+    }
+
+    // Delete Tournament Confirmation Dialog
+    if (showDeleteConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!isDeletingTournament) showDeleteConfirmDialog = false },
+            containerColor = SurfaceDark,
+            title = {
+                Text(
+                    text = "Delete Tournament?",
+                    color = PrimaryText,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp
+                )
+            },
+            text = {
+                Text(
+                    text = "Are you sure you want to delete \"${t.name}\"? All brackets, matches, registered participants, and standings will be permanently deleted. This action cannot be undone.",
+                    color = SecondaryText,
+                    fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        isDeletingTournament = true
+                        scope.launch {
+                            val res = RepositoryProvider.tournamentRepository.deleteTournament(t.id, currentUser?.id ?: "")
+                            isDeletingTournament = false
+                            showDeleteConfirmDialog = false
+                            res.fold(
+                                onSuccess = {
+                                    Toast.makeText(context, "Tournament deleted successfully", Toast.LENGTH_SHORT).show()
+                                    onNavigateBack()
+                                },
+                                onFailure = { err ->
+                                    Toast.makeText(context, err.message ?: "Failed to delete tournament", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ErrorRed),
+                    enabled = !isDeletingTournament
+                ) {
+                    if (isDeletingTournament) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = PrimaryText, strokeWidth = 2.dp)
+                    } else {
+                        Text("Delete Permanently", color = PrimaryText, fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showDeleteConfirmDialog = false },
+                    enabled = !isDeletingTournament
                 ) {
                     Text("Cancel", color = SecondaryText)
                 }
@@ -703,6 +784,141 @@ fun TournamentDetailScreen(
             }
         )
     }
+
+    // Host Manage Rules Dialog
+    if (showManageRulesDialog) {
+        var rulesList by remember { mutableStateOf(t.rules) }
+        var currentRuleText by remember { mutableStateOf("") }
+        var isSavingRules by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { if (!isSavingRules) showManageRulesDialog = false },
+            containerColor = SurfaceDark,
+            title = {
+                Text("Tournament Rules", color = PrimaryText, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        "Manually specify custom rules. Each rule will be displayed as a distinct bullet point to participants.",
+                        color = SecondaryText,
+                        fontSize = 13.sp
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = currentRuleText,
+                            onValueChange = { currentRuleText = it },
+                            placeholder = { Text("Type rule here...", color = SecondaryText, fontSize = 13.sp) },
+                            modifier = Modifier.weight(1f),
+                            singleLine = false,
+                            maxLines = 2
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                val trimmed = currentRuleText.trim()
+                                if (trimmed.isNotBlank()) {
+                                    rulesList = rulesList + trimmed
+                                    currentRuleText = ""
+                                }
+                            },
+                            enabled = currentRuleText.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Add")
+                        }
+                    }
+
+                    if (rulesList.isNotEmpty()) {
+                        Text(
+                            text = "CUSTOM RULES (${rulesList.size})",
+                            color = AccentBlue,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 220.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            itemsIndexed(rulesList) { idx, rule ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(SurfaceCard, RoundedCornerShape(8.dp))
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("•", color = AccentBlue, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = rule,
+                                        color = PrimaryText,
+                                        fontSize = 13.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    IconButton(
+                                        onClick = {
+                                            rulesList = rulesList.filterIndexed { i, _ -> i != idx }
+                                        },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "Remove rule",
+                                            tint = ErrorRed,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        isSavingRules = true
+                        scope.launch {
+                            RepositoryProvider.tournamentRepository.updateTournamentRules(t.id, rulesList)
+                            isSavingRules = false
+                            showManageRulesDialog = false
+                            Toast.makeText(context, "Tournament rules updated", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    enabled = !isSavingRules,
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                ) {
+                    if (isSavingRules) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = PrimaryText, strokeWidth = 2.dp)
+                    } else {
+                        Text("Save Rules")
+                    }
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showManageRulesDialog = false },
+                    enabled = !isSavingRules
+                ) {
+                    Text("Cancel", color = SecondaryText)
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -711,7 +927,9 @@ private fun OverviewTabContent(
     participants: List<TournamentParticipant>,
     isHost: Boolean,
     hostAccessCode: String?,
-    onChangeVisibility: () -> Unit
+    onChangeVisibility: () -> Unit,
+    onDeleteTournament: () -> Unit,
+    onManageRules: () -> Unit
 ) {
     val context = LocalContext.current
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -728,7 +946,7 @@ private fun OverviewTabContent(
                     .padding(14.dp)
             ) {
                 Column {
-                    Text("TOURNAMENT RULES & SETUP", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Text("TOURNAMENT SETUP", color = SecondaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     Spacer(modifier = Modifier.height(10.dp))
                     OverviewDetailRow("Format", tournament.format.displayName)
                     OverviewDetailRow("Game", tournament.game.displayName)
@@ -738,6 +956,80 @@ private fun OverviewTabContent(
                     OverviewDetailRow("Visibility", tournament.visibility.displayName)
                     if (tournament.publicId.isNotBlank()) {
                         OverviewDetailRow("Tournament ID", tournament.publicId)
+                    }
+                }
+            }
+        }
+
+        // TOURNAMENT RULES SECTION (Displayed as bullets to all users)
+        item {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(SurfaceCard)
+                    .border(1.dp, BorderSubtle, RoundedCornerShape(10.dp))
+                    .padding(14.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "TOURNAMENT RULES",
+                            color = SecondaryText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                        if (isHost) {
+                            TextButton(
+                                onClick = onManageRules,
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                            ) {
+                                Icon(Icons.Default.Edit, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(13.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(if (tournament.rules.isEmpty()) "Add Rules" else "Edit Rules", color = AccentBlue, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    val displayRules = if (tournament.rules.isNotEmpty()) {
+                        tournament.rules
+                    } else {
+                        listOf(
+                            "Standard fair play rules apply to all matches.",
+                            "Both players must take screenshots of final match scores.",
+                            "Disconnections during active play must be reported to the host immediately.",
+                            "Toxic behavior, cheating, or manipulation leads to instant disqualification."
+                        )
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        displayRules.forEach { rule ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Text(
+                                    text = "•",
+                                    color = if (tournament.rules.isNotEmpty()) AccentBlue else SecondaryText,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(end = 8.dp)
+                                )
+                                Text(
+                                    text = rule,
+                                    color = if (tournament.rules.isNotEmpty()) PrimaryText else SecondaryText,
+                                    fontSize = 13.sp,
+                                    lineHeight = 18.sp,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -872,6 +1164,19 @@ private fun OverviewTabContent(
                                     Text("Switch to ${if (tournament.visibility == TournamentVisibility.PUBLIC) "Private" else "Public"}", fontSize = 11.sp)
                                 }
                             }
+                        }
+
+                        // 5. Danger Zone: Delete Tournament
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedButton(
+                            onClick = onDeleteTournament,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(6.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, ErrorRed.copy(alpha = 0.6f))
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = null, tint = ErrorRed, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Delete Tournament", color = ErrorRed, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }

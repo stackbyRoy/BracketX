@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Play, CheckCircle2, Lock, Shuffle, Loader2, Share2, Check } from 'lucide-react';
+import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom';
+import { ArrowLeft, Play, CheckCircle2, Lock, Shuffle, Loader2, Share2, Check, Trash2, Edit3, Plus, X } from 'lucide-react';
 import type { Tournament, Participant, Match, Group, Standing, FairnessScore } from '../engine/types';
 import { api, supabase } from '../api/supabase';
 import { useAuth } from '../context/AuthContext';
@@ -14,6 +14,7 @@ import { shareTournament } from '../utils/share';
 
 export const TournamentDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { user } = useAuth();
 
   const [tournament, setTournament] = useState<Tournament | null>(null);
@@ -23,11 +24,15 @@ export const TournamentDetailPage: React.FC = () => {
   const [standings, setStandings] = useState<Standing[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [activeTab, setActiveTab] = useState<'bracket' | 'matches' | 'standings' | 'participants'>('bracket');
+  const [activeTab, setActiveTab] = useState<'bracket' | 'matches' | 'standings' | 'participants' | 'rules'>('bracket');
 
   // Modals state
   const [showRegModal, setShowRegModal] = useState(false);
   const [showDrawModal, setShowDrawModal] = useState(false);
+  const [showRulesModal, setShowRulesModal] = useState(false);
+  const [rulesList, setRulesList] = useState<string[]>([]);
+  const [newRuleText, setNewRuleText] = useState('');
+  const [savingRules, setSavingRules] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [fairnessScore, setFairnessScore] = useState<FairnessScore>({
     totalScore: 90.0,
@@ -52,6 +57,19 @@ export const TournamentDetailPage: React.FC = () => {
     } else if (result.shared) {
       setShareFeedback('Shared!');
       setTimeout(() => setShareFeedback(null), 3000);
+    }
+  };
+
+  const handleDeleteTournament = async () => {
+    if (!tournament) return;
+    if (!window.confirm(`Are you sure you want to delete "${tournament.name}"? This action cannot be undone. All matches, brackets, participants, and standings will be permanently deleted.`)) {
+      return;
+    }
+    try {
+      await api.deleteTournament(tournament.id, user?.id);
+      navigate('/');
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete tournament');
     }
   };
 
@@ -317,6 +335,22 @@ export const TournamentDetailPage: React.FC = () => {
                     <span>Competition Active (Click match to submit score)</span>
                   </div>
                 )}
+
+                <button
+                  onClick={handleDeleteTournament}
+                  className="btn-secondary"
+                  style={{
+                    color: 'var(--status-danger)',
+                    borderColor: 'rgba(235, 87, 87, 0.4)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                  title="Delete Tournament"
+                >
+                  <Trash2 size={16} />
+                  <span>Delete Tournament</span>
+                </button>
               </>
             ) : (
               tournament.registrationOpen && !isRegistered ? (
@@ -369,6 +403,11 @@ export const TournamentDetailPage: React.FC = () => {
           active={activeTab === 'participants'}
           onClick={() => setActiveTab('participants')}
           label={`Players (${participants.length})`}
+        />
+        <TabButton
+          active={activeTab === 'rules'}
+          onClick={() => setActiveTab('rules')}
+          label={`Rules (${tournament.rules?.length || 0})`}
         />
       </div>
 
@@ -493,6 +532,59 @@ export const TournamentDetailPage: React.FC = () => {
         </div>
       )}
 
+      {activeTab === 'rules' && (
+        <div className="card" style={{ padding: '24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                Tournament Rules
+              </h3>
+              <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                Official guidelines and fair play regulations for all participants.
+              </p>
+            </div>
+            {isHost && (
+              <button
+                onClick={() => {
+                  setRulesList(tournament.rules || []);
+                  setShowRulesModal(true);
+                }}
+                className="btn-secondary"
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}
+              >
+                <Edit3 size={14} />
+                <span>{tournament.rules?.length ? 'Edit Rules' : 'Add Rules'}</span>
+              </button>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {(tournament.rules && tournament.rules.length > 0 ? tournament.rules : [
+              "Standard fair play rules apply to all matches.",
+              "Both players must screenshot and confirm final match scores.",
+              "Disconnections during active play must be reported to the host immediately.",
+              "Toxic behavior, cheating, or manipulation leads to instant disqualification."
+            ]).map((rule, idx) => (
+              <div
+                key={idx}
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '12px',
+                  padding: '12px 14px',
+                  background: 'rgba(255, 255, 255, 0.02)',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-subtle)'
+                }}
+              >
+                <span style={{ color: 'var(--accent-blue)', fontSize: '18px', lineHeight: '20px', fontWeight: 'bold' }}>•</span>
+                <span style={{ color: 'var(--text-primary)', fontSize: '14px', lineHeight: '20px' }}>{rule}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Modals */}
       <RegistrationModal
         tournament={tournament}
@@ -520,6 +612,135 @@ export const TournamentDetailPage: React.FC = () => {
         onRegenerate={handleRegenerate}
         onLocked={() => loadData(tournament.id)}
       />
+
+      {showRulesModal && (
+        <div className="modal-overlay" style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 1000, padding: '16px'
+        }}>
+          <div className="modal-content" style={{
+            background: 'var(--surface-dark)',
+            borderRadius: '12px',
+            border: '1px solid var(--border-subtle)',
+            maxWidth: '540px',
+            width: '100%',
+            padding: '24px',
+            display: 'flex', flexDirection: 'column', gap: '16px'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                Manage Tournament Rules
+              </h3>
+              <button
+                onClick={() => setShowRulesModal(false)}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary)' }}>
+              Manually type each rule. Each rule will be displayed as a distinct bullet to all users.
+            </p>
+
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input
+                type="text"
+                placeholder="Type a rule (e.g. Match duration 6 mins)..."
+                value={newRuleText}
+                onChange={(e) => setNewRuleText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (newRuleText.trim()) {
+                      setRulesList([...rulesList, newRuleText.trim()]);
+                      setNewRuleText('');
+                    }
+                  }
+                }}
+                className="input"
+                style={{ flex: 1, padding: '10px 12px', borderRadius: '6px' }}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (newRuleText.trim()) {
+                    setRulesList([...rulesList, newRuleText.trim()]);
+                    setNewRuleText('');
+                  }
+                }}
+                disabled={!newRuleText.trim()}
+                className="btn-primary"
+                style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '10px 14px' }}
+              >
+                <Plus size={16} />
+                <span>Add</span>
+              </button>
+            </div>
+
+            {rulesList.length > 0 && (
+              <div style={{ maxHeight: '220px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {rulesList.map((rule, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      background: 'rgba(255, 255, 255, 0.03)', padding: '8px 12px',
+                      borderRadius: '6px', border: '1px solid var(--border-subtle)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+                      <span style={{ color: 'var(--accent-blue)', fontWeight: 'bold' }}>•</span>
+                      <span style={{ fontSize: '13px', color: 'var(--text-primary)' }}>{rule}</span>
+                    </div>
+                    <button
+                      onClick={() => setRulesList(rulesList.filter((_, i) => i !== idx))}
+                      style={{ background: 'transparent', border: 'none', color: 'var(--status-danger)', cursor: 'pointer', padding: '4px' }}
+                      title="Remove rule"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
+              <button
+                type="button"
+                onClick={() => setShowRulesModal(false)}
+                className="btn-secondary"
+                disabled={savingRules}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!tournament) return;
+                  setSavingRules(true);
+                  try {
+                    const updated = await api.updateRules(tournament.id, rulesList);
+                    setTournament(updated);
+                    setShowRulesModal(false);
+                  } catch (err: any) {
+                    alert(err?.message || 'Failed to save rules');
+                  } finally {
+                    setSavingRules(false);
+                  }
+                }}
+                className="btn-primary"
+                disabled={savingRules}
+              >
+                {savingRules ? 'Saving...' : 'Save Rules'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

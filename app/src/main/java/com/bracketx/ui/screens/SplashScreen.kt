@@ -60,73 +60,73 @@ fun SplashScreen(
     val overallAlpha = remember { Animatable(1f) }
 
     LaunchedEffect(Unit) {
-        // 1. Logo & ambient glow entrance
+        // 1. Logo & ambient glow entrance (~420ms)
         launch {
             logoScale.animateTo(
                 targetValue = 1f,
-                animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing)
+                animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing)
             )
         }
         launch {
             logoAlpha.animateTo(
                 targetValue = 1f,
-                animationSpec = tween(durationMillis = 450, easing = LinearEasing)
+                animationSpec = tween(durationMillis = 320, easing = LinearEasing)
             )
         }
         launch {
             glowAlpha.animateTo(
                 targetValue = 0.45f,
-                animationSpec = tween(durationMillis = 550, easing = FastOutSlowInEasing)
+                animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing)
             )
             glowScale.animateTo(
                 targetValue = 1.25f,
                 animationSpec = infiniteRepeatable(
-                    animation = tween(durationMillis = 1300, easing = FastOutSlowInEasing),
+                    animation = tween(durationMillis = 1000, easing = FastOutSlowInEasing),
                     repeatMode = RepeatMode.Reverse
                 )
             )
         }
 
-        // 2. Title and subtitle entrance with slight stagger
-        delay(320)
+        // 2. Title and subtitle entrance with slight stagger (~200ms stagger)
+        delay(180)
         launch {
             textAlpha.animateTo(
                 targetValue = 1f,
-                animationSpec = tween(durationMillis = 450, easing = LinearEasing)
+                animationSpec = tween(durationMillis = 320, easing = LinearEasing)
             )
         }
         launch {
             textOffsetY.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 450, easing = FastOutSlowInEasing)
+                animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing)
             )
         }
 
         // 3. Status indicator fade-in
-        delay(180)
+        delay(120)
         launch {
             progressAlpha.animateTo(
                 targetValue = 1f,
-                animationSpec = tween(durationMillis = 350)
+                animationSpec = tween(durationMillis = 250)
             )
         }
 
-        // 4. Hold presentation for optimal pacing (~1250ms total)
-        delay(750)
+        // 4. Hold presentation for optimal pacing (settles around 900-950ms)
+        delay(420)
 
-        // Ad readiness evaluation checkpoint (~80% through splash progression)
+        // Ad readiness evaluation checkpoint (~80% through ~1.2s splash progression)
         onAdCheckpoint()
 
-        // 5. Smooth exit scaling and fade out
+        // 5. Smooth exit scaling and fade out (~280ms, reaching ~1200ms total)
         launch {
             logoScale.animateTo(
                 targetValue = 1.06f,
-                animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing)
+                animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
             )
         }
         overallAlpha.animateTo(
             targetValue = 0f,
-            animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing)
+            animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
         )
 
         onSplashFinished()

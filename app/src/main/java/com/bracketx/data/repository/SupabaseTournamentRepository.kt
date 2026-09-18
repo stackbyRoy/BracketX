@@ -54,15 +54,37 @@ class SupabaseTournamentRepository : TournamentRepository {
         refreshTournaments()
     }
 
-    fun refreshTournaments() {
+    override fun refreshTournaments(userId: String?) {
         scope.launch {
-            val result = SupabaseClient.get("/rest/v1/tournaments?select=*&order=created_at.desc")
+            val result = if (!userId.isNullOrBlank()) {
+                val payload = """{"p_user_id": "$userId"}"""
+                SupabaseClient.rpc("get_dashboard_tournaments", payload)
+            } else {
+                SupabaseClient.get("/rest/v1/tournaments?select=*&order=created_at.desc")
+            }
+
             result.onSuccess { body ->
                 try {
                     val arr = json.parseToJsonElement(body).jsonArray
-                    val map = arr.mapNotNull { parseTournament(it.jsonObject) }.associateBy { it.id }
-                    tournamentsState.value = map
+                    val remoteMap = arr.mapNotNull { parseTournament(it.jsonObject) }.associateBy { it.id }
+                    // Merge with current state so locally cached host tournaments are preserved
+                    val merged = tournamentsState.value.toMutableMap()
+                    merged.putAll(remoteMap)
+                    tournamentsState.value = merged
                 } catch (_: Exception) {}
+            }.onFailure {
+                if (!userId.isNullOrBlank()) {
+                    val fallback = SupabaseClient.get("/rest/v1/tournaments?select=*&order=created_at.desc")
+                    fallback.onSuccess { body ->
+                        try {
+                            val arr = json.parseToJsonElement(body).jsonArray
+                            val remoteMap = arr.mapNotNull { parseTournament(it.jsonObject) }.associateBy { it.id }
+                            val merged = tournamentsState.value.toMutableMap()
+                            merged.putAll(remoteMap)
+                            tournamentsState.value = merged
+                        } catch (_: Exception) {}
+                    }
+                }
             }
         }
     }
@@ -141,6 +163,7 @@ class SupabaseTournamentRepository : TournamentRepository {
                 "status": "draft",
                 "visibility": "$vis",
                 ${if (codeHash != null) "\"private_access_code_hash\": \"$codeHash\"," else ""}
+                "rules": [${tournament.rules.joinToString(",") { "\"${escapeJson(it)}\"" }}],
                 "max_participants": ${tournament.maxParticipants},
                 "registration_open": false,
                 "draw_locked": false
@@ -682,6 +705,13 @@ class SupabaseTournamentRepository : TournamentRepository {
         val maxParticipants = obj["max_participants"]?.jsonPrimitive?.intOrNull ?: 16
         val regOpen = obj["registration_open"]?.jsonPrimitive?.booleanOrNull ?: false
         val drawLocked = obj["draw_locked"]?.jsonPrimitive?.booleanOrNull ?: false
+        val rules = try {
+            obj["rules"]?.jsonArray?.mapNotNull {
+                try { it.jsonPrimitive.content } catch (_: Exception) { null }
+            } ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
 
         return Tournament(
             id = id,
@@ -707,7 +737,8 @@ class SupabaseTournamentRepository : TournamentRepository {
             visibility = TournamentVisibility.fromString(visibilityStr),
             maxParticipants = maxParticipants,
             registrationOpen = regOpen,
-            drawLocked = drawLocked
+            drawLocked = drawLocked,
+            rules = rules
         )
     }
 
@@ -828,5 +859,72 @@ class SupabaseTournamentRepository : TournamentRepository {
 
     private fun escapeJson(str: String): String {
         return str.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+    }
+
+    override suspend fun deleteTournament(tournamentId: String, hostId: String): Result<Unit> {
+        val payload = """{"p_tournament_id": "$tournamentId", "p_host_id": "$hostId"}"""
+        val rpcResult = SupabaseClient.rpc("delete_tournament_as_host", payload)
+
+        return rpcResult.fold(
+            onSuccess = {
+                val current = tournamentsState.value.toMutableMap()
+                current.remove(tournamentId)
+                tournamentsState.value = current
+                Result.success(Unit)
+            },
+            onFailure = { err ->
+                // Direct REST DELETE fallback
+                val directResult = SupabaseClient.delete("/rest/v1/tournaments?id=eq.$tournamentId")
+                if (directResult.isSuccess) {
+                    val current = tournamentsState.value.toMutableMap()
+                    current.remove(tournamentId)
+                    tournamentsState.value = current
+                    Result.success(Unit)
+                } else {
+                    Result.failure(err)
+                }
+            }
+        )
+    }
+
+    override suspend fun updateTournamentRules(tournamentId: String, rules: List<String>): Result<Tournament> {
+        val rulesJson = rules.joinToString(",") { "\"${escapeJson(it)}\"" }
+        val payload = """{"rules": [$rulesJson]}"""
+        val result = SupabaseClient.patch("/rest/v1/tournaments?id=eq.$tournamentId", payload)
+
+        return result.fold(
+            onSuccess = { body ->
+                var updated: Tournament? = null
+                try {
+                    val arr = json.parseToJsonElement(body).jsonArray
+                    val first = arr.firstOrNull()?.jsonObject
+                    if (first != null) {
+                        parseTournament(first)?.let { updated = it }
+                    }
+                } catch (_: Exception) {}
+
+                val current = tournamentsState.value.toMutableMap()
+                val finalTourney = updated ?: current[tournamentId]?.copy(rules = rules)
+                if (finalTourney != null) {
+                    current[tournamentId] = finalTourney
+                    tournamentsState.value = current
+                    Result.success(finalTourney)
+                } else {
+                    Result.failure(Exception("Failed to update tournament rules"))
+                }
+            },
+            onFailure = { err ->
+                val current = tournamentsState.value.toMutableMap()
+                val existing = current[tournamentId]
+                if (existing != null) {
+                    val updated = existing.copy(rules = rules)
+                    current[tournamentId] = updated
+                    tournamentsState.value = current
+                    Result.success(updated)
+                } else {
+                    Result.failure(err)
+                }
+            }
+        )
     }
 }

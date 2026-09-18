@@ -37,6 +37,7 @@ export interface Tournament {
   maxParticipants: number;
   registrationOpen: boolean;
   drawLocked: boolean;
+  rules?: string[];
   settings: TournamentSettings;
   createdAt?: string;
   updatedAt?: string;

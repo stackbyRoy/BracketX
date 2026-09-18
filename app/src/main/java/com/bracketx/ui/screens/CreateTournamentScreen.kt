@@ -16,12 +16,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Public
@@ -64,6 +66,7 @@ import com.bracketx.domain.model.TournamentVisibility
 import com.bracketx.ui.theme.AccentBlue
 import com.bracketx.ui.theme.BackgroundDark
 import com.bracketx.ui.theme.BorderSubtle
+import com.bracketx.ui.theme.ErrorRed
 import com.bracketx.ui.theme.PrimaryText
 import com.bracketx.ui.theme.SecondaryText
 import com.bracketx.ui.theme.SuccessGreen
@@ -96,6 +99,8 @@ fun CreateTournamentScreen(
     var maxParticipants by remember { mutableIntStateOf(32) }
     var selectedVisibility by remember { mutableStateOf(TournamentVisibility.PUBLIC) }
     var generatedAccessCode by remember { mutableStateOf(generateSecureAccessCode()) }
+    var rulesList by remember { mutableStateOf<List<String>>(emptyList()) }
+    var newRuleText by remember { mutableStateOf("") }
 
     var createdTournamentResult by remember { mutableStateOf<Tournament?>(null) }
     var showCreatedSuccessDialog by remember { mutableStateOf(false) }
@@ -128,7 +133,7 @@ fun CreateTournamentScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "STEP $currentStep OF 5",
+                    text = "STEP $currentStep OF 6",
                     color = AccentBlue,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
@@ -308,6 +313,100 @@ fun CreateTournamentScreen(
                 }
 
                 5 -> {
+                    Text("Tournament Rules", color = PrimaryText, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("Specify custom rules for participants by manually typing them below. Each rule will be displayed as a bullet to users.", color = SecondaryText, fontSize = 13.sp)
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = newRuleText,
+                            onValueChange = { newRuleText = it },
+                            placeholder = { Text("e.g., Match duration 6 mins, No pause during active attack", color = SecondaryText, fontSize = 12.sp) },
+                            modifier = Modifier.weight(1f),
+                            singleLine = false,
+                            maxLines = 2
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                val trimmed = newRuleText.trim()
+                                if (trimmed.isNotBlank()) {
+                                    rulesList = rulesList + trimmed
+                                    newRuleText = ""
+                                }
+                            },
+                            enabled = newRuleText.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Add")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    if (rulesList.isNotEmpty()) {
+                        Text(
+                            text = "CUSTOM RULES (${rulesList.size})",
+                            color = AccentBlue,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            rulesList.forEachIndexed { idx, rule ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(SurfaceCard)
+                                        .border(1.dp, BorderSubtle, RoundedCornerShape(8.dp))
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("•", color = AccentBlue, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(text = rule, color = PrimaryText, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                                    IconButton(
+                                        onClick = {
+                                            rulesList = rulesList.filterIndexed { i, _ -> i != idx }
+                                        },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "Remove rule",
+                                            tint = ErrorRed,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(SurfaceCard)
+                                .border(1.dp, BorderSubtle, RoundedCornerShape(8.dp))
+                                .padding(16.dp)
+                        ) {
+                            Column {
+                                Text("No custom rules added (Optional)", color = PrimaryText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text("Standard fair-play rules will be applied automatically if no rules are typed.", color = SecondaryText, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+
+                6 -> {
                     Text("Review & Confirm", color = PrimaryText, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     Text("Verify the tournament setup before launching.", color = SecondaryText, fontSize = 13.sp)
                     Spacer(modifier = Modifier.height(16.dp))
@@ -330,6 +429,19 @@ fun CreateTournamentScreen(
                             if (selectedVisibility == TournamentVisibility.PRIVATE) {
                                 ReviewRow("Access Code", generatedAccessCode)
                             }
+                            ReviewRow("Custom Rules", if (rulesList.isEmpty()) "Standard fair-play defaults" else "${rulesList.size} custom rules configured")
+                            if (rulesList.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                rulesList.forEach { rule ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                        verticalAlignment = Alignment.Top
+                                    ) {
+                                        Text("•", color = AccentBlue, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 6.dp))
+                                        Text(rule, color = SecondaryText, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -351,7 +463,7 @@ fun CreateTournamentScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                 }
 
-                if (currentStep < 5) {
+                if (currentStep < 6) {
                     Button(
                         onClick = { currentStep++ },
                         enabled = currentStep != 1 || tournamentName.isNotBlank(),
@@ -372,6 +484,7 @@ fun CreateTournamentScreen(
                                 visibility = selectedVisibility,
                                 maxParticipants = maxParticipants.coerceIn(2, 32),
                                 registrationOpen = false,
+                                rules = rulesList,
                                 settings = TournamentSettings()
                             )
 

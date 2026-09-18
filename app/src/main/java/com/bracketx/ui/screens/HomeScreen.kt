@@ -3,6 +3,7 @@ package com.bracketx.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -32,6 +34,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -79,8 +82,37 @@ fun HomeScreen(
     var isSearching by remember { mutableStateOf(false) }
     var searchErrorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Section 1: My Tournaments (Host or Member)
-    val myTournaments = tournaments.filter { it.hostId == currentUser?.id }
+    LaunchedEffect(currentUser?.id) {
+        RepositoryProvider.tournamentRepository.refreshTournaments(currentUser?.id)
+    }
+
+    var selectedCategory by remember { mutableStateOf(TournamentFilterCategory.ALL) }
+
+    // Section 1: My Tournaments (Host or Member) - Ensures host's private tournaments are included
+    val myTournaments = tournaments.filter {
+        (currentUser != null && it.hostId == currentUser?.id) ||
+        (currentUser == null && it.hostId.isNotBlank())
+    }
+
+    val liveTournaments = myTournaments.filter { it.status == TournamentStatus.IN_PROGRESS }
+    val upcomingTournaments = myTournaments.filter {
+        it.status in listOf(
+            TournamentStatus.DRAFT,
+            TournamentStatus.REGISTRATION_OPEN,
+            TournamentStatus.REGISTRATION_CLOSED,
+            TournamentStatus.DRAW_PENDING,
+            TournamentStatus.DRAW_GENERATED,
+            TournamentStatus.DRAW_LOCKED
+        )
+    }
+    val finishedTournaments = myTournaments.filter { it.status == TournamentStatus.COMPLETED }
+
+    val displayedMyTournaments = when (selectedCategory) {
+        TournamentFilterCategory.ALL -> myTournaments
+        TournamentFilterCategory.LIVE -> liveTournaments
+        TournamentFilterCategory.UPCOMING -> upcomingTournaments
+        TournamentFilterCategory.FINISHED -> finishedTournaments
+    }
 
     // Section 2: Public Discover Tournaments (Strictly PUBLIC tournaments not hosted by current user)
     val discoverTournaments = tournaments.filter {
@@ -239,18 +271,55 @@ fun HomeScreen(
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp
                 )
+                Spacer(modifier = Modifier.height(10.dp))
+                // Interactive Status Filter Row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilterPill(
+                        label = "All (${myTournaments.size})",
+                        isSelected = selectedCategory == TournamentFilterCategory.ALL,
+                        onClick = { selectedCategory = TournamentFilterCategory.ALL }
+                    )
+                    FilterPill(
+                        label = "🔴 Live (${liveTournaments.size})",
+                        isSelected = selectedCategory == TournamentFilterCategory.LIVE,
+                        onClick = { selectedCategory = TournamentFilterCategory.LIVE }
+                    )
+                    FilterPill(
+                        label = "⏳ Upcoming (${upcomingTournaments.size})",
+                        isSelected = selectedCategory == TournamentFilterCategory.UPCOMING,
+                        onClick = { selectedCategory = TournamentFilterCategory.UPCOMING }
+                    )
+                    FilterPill(
+                        label = "🏁 Finished (${finishedTournaments.size})",
+                        isSelected = selectedCategory == TournamentFilterCategory.FINISHED,
+                        onClick = { selectedCategory = TournamentFilterCategory.FINISHED }
+                    )
+                }
             }
 
-            if (myTournaments.isEmpty()) {
+            if (displayedMyTournaments.isEmpty()) {
                 item {
+                    val emptyText = when (selectedCategory) {
+                        TournamentFilterCategory.ALL -> "You haven't organized or joined any tournaments yet."
+                        TournamentFilterCategory.LIVE -> "No live tournaments currently in progress."
+                        TournamentFilterCategory.UPCOMING -> "No upcoming tournaments scheduled."
+                        TournamentFilterCategory.FINISHED -> "No finished tournaments yet."
+                    }
+                    val canCreate = selectedCategory == TournamentFilterCategory.ALL || selectedCategory == TournamentFilterCategory.UPCOMING
                     EmptyTournamentCard(
-                        text = "You haven't organized any tournaments yet.",
-                        actionText = "Create your first tournament",
-                        onClick = onNavigateToCreate
+                        text = emptyText,
+                        actionText = if (canCreate) "Create a tournament" else null,
+                        onClick = if (canCreate) onNavigateToCreate else null
                     )
                 }
             } else {
-                items(myTournaments) { tournament ->
+                items(displayedMyTournaments) { tournament ->
                     TournamentItemCard(
                         tournament = tournament,
                         onClick = { onNavigateToTournament(tournament.id) }
@@ -407,3 +476,38 @@ private fun EmptyTournamentCard(
         }
     }
 }
+
+enum class TournamentFilterCategory {
+    ALL,
+    LIVE,
+    UPCOMING,
+    FINISHED
+}
+
+@Composable
+private fun FilterPill(
+    label: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    val bgColor = if (isSelected) AccentBlue else SurfaceCard
+    val textColor = if (isSelected) PrimaryText else SecondaryText
+    val borderColor = if (isSelected) AccentBlue else BorderSubtle
+
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(bgColor)
+            .border(1.dp, borderColor, RoundedCornerShape(20.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 7.dp)
+    ) {
+        Text(
+            text = label,
+            color = textColor,
+            fontSize = 12.sp,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+        )
+    }
+}
+

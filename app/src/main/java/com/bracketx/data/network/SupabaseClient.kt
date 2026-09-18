@@ -130,4 +130,23 @@ object SupabaseClient {
             Result.failure(e)
         }
     }
+
+    suspend fun delete(path: String): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val request = newRequestBuilder(path)
+                .header("Prefer", "return=representation")
+                .delete()
+                .build()
+
+            val response = okHttpClient.newCall(request).execute()
+            val body = response.body?.string().orEmpty()
+            if (response.isSuccessful) {
+                Result.success(body)
+            } else {
+                Result.failure(Exception("HTTP ${response.code}: $body"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 }

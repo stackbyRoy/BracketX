@@ -24,6 +24,22 @@ export const api = {
     return (data || []).map(mapTournament);
   },
 
+  async deleteTournament(id: string, hostId?: string): Promise<void> {
+    if (hostId) {
+      const { error: rpcError } = await supabase.rpc('delete_tournament_as_host', {
+        p_tournament_id: id,
+        p_host_id: hostId,
+      });
+      if (!rpcError) return;
+    }
+    const { error } = await supabase
+      .from('tournaments')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+  },
+
   async getTournament(id: string): Promise<Tournament | null> {
     const clean = id.trim();
     const isPublicId = clean.toUpperCase().startsWith('BRX-');
@@ -95,6 +111,18 @@ export const api = {
       .eq('id', id);
 
     if (error) throw error;
+  },
+
+  async updateRules(tournamentId: string, rules: string[]): Promise<Tournament> {
+    const { data, error } = await supabase
+      .from('tournaments')
+      .update({ rules })
+      .eq('id', tournamentId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return mapTournament(data);
   },
 
   // Participants
@@ -308,6 +336,7 @@ function mapTournament(raw: any): Tournament {
     maxParticipants: raw.max_participants || raw.maxParticipants || 32,
     registrationOpen: raw.registration_open ?? raw.registrationOpen ?? false,
     drawLocked: raw.draw_locked ?? raw.drawLocked ?? false,
+    rules: Array.isArray(raw.rules) ? raw.rules : [],
     settings: raw.settings || {},
     createdAt: raw.created_at || raw.createdAt,
     updatedAt: raw.updated_at || raw.updatedAt,

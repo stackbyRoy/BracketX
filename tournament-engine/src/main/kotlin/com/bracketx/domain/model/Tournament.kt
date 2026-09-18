@@ -44,6 +44,7 @@ data class Tournament(
     val registrationOpen: Boolean = false,
     val drawLocked: Boolean = false,
     val settings: TournamentSettings = TournamentSettings(),
+    val rules: List<String> = emptyList(),
     val createdAt: String? = null,
     val updatedAt: String? = null
 ) {

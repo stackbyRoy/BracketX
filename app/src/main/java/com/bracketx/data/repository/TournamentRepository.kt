@@ -44,6 +44,10 @@ interface TournamentRepository {
     suspend fun generateDraw(tournamentId: String, seed: Long = System.currentTimeMillis()): Result<TournamentStructure>
     suspend fun lockDraw(tournamentId: String): Result<Tournament>
     suspend fun submitScore(tournamentId: String, matchId: String, scoreA: Int, scoreB: Int, isOverride: Boolean = false): Result<List<Match>>
+
+    suspend fun deleteTournament(tournamentId: String, hostId: String): Result<Unit>
+    suspend fun updateTournamentRules(tournamentId: String, rules: List<String>): Result<Tournament>
+    fun refreshTournaments(userId: String? = null)
 }
 
 class InMemoryTournamentRepository : TournamentRepository {
@@ -360,5 +364,29 @@ class InMemoryTournamentRepository : TournamentRepository {
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    override suspend fun deleteTournament(tournamentId: String, hostId: String): Result<Unit> {
+        val current = tournamentsFlow.value.toMutableMap()
+        val tournament = current[tournamentId]
+        if (tournament != null && tournament.hostId != hostId) {
+            return Result.failure(IllegalAccessException("Only the tournament host can delete this tournament."))
+        }
+        current.remove(tournamentId)
+        tournamentsFlow.value = current
+        return Result.success(Unit)
+    }
+
+    override suspend fun updateTournamentRules(tournamentId: String, rules: List<String>): Result<Tournament> {
+        val current = tournamentsFlow.value.toMutableMap()
+        val tournament = current[tournamentId] ?: return Result.failure(IllegalArgumentException("Tournament not found"))
+        val updated = tournament.copy(rules = rules)
+        current[tournamentId] = updated
+        tournamentsFlow.value = current
+        return Result.success(updated)
+    }
+
+    override fun refreshTournaments(userId: String?) {
+        // No-op for in-memory implementation
     }
 }

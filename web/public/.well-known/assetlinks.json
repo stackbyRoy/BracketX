@@ -5,7 +5,8 @@
       "namespace": "android_app",
       "package_name": "com.stackbyroy.bracketx",
       "sha256_cert_fingerprints": [
-        "FE:06:F8:68:7B:22:A0:DE:ED:45:91:3A:84:EA:FA:F8:83:91:BD:F7:C0:A2:2F:02:93:12:20:C9:6C:76:0E:16"
+        "FE:06:F8:68:7B:22:A0:DE:ED:45:91:3A:84:EA:FA:F8:83:91:BD:F7:C0:A2:2F:02:93:12:20:C9:6C:76:0E:16",
+        "FE:DB:CE:FD:0E:68:1E:43:01:DB:58:84:1A:E3:6A:0D:70:1F:4E:C9:FA:07:A5:98:B9:03:7C:9A:8D:5B:B1:2C"
       ]
     }
   }

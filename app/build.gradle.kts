@@ -41,6 +41,19 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            val keystorePath = localProps.getProperty("keystore.path") ?: "bracketx-release.jks"
+            val keystoreFile = rootProject.file(keystorePath)
+            if (keystoreFile.exists()) {
+                storeFile = keystoreFile
+                storePassword = localProps.getProperty("keystore.password") ?: "bracketx123"
+                keyAlias = localProps.getProperty("key.alias") ?: "bracketx"
+                keyPassword = localProps.getProperty("key.password") ?: "bracketx123"
+            }
+        }
+    }
+
     buildTypes {
         debug {
             buildConfigField("Boolean", "UNITY_TEST_MODE", unityTestModeProp ?: "true")
@@ -52,6 +65,7 @@ android {
                 "proguard-rules.pro"
             )
             buildConfigField("Boolean", "UNITY_TEST_MODE", unityTestModeProp ?: "false")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
