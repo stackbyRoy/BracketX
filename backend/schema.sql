@@ -73,7 +73,7 @@ BEGIN
 
     RETURN v_result;
 END;
-$$ LANGUAGE plpgsql VOLATILE;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- Trigger to assign public_id if not supplied on insert
 CREATE OR REPLACE FUNCTION public.trg_assign_tournament_public_id()

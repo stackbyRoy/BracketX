@@ -79,15 +79,27 @@ export const api = {
   },
 
   async createTournament(t: Partial<Tournament>): Promise<Tournament> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) {
+      throw new Error('Authentication session missing or expired. Please sign in again.');
+    }
+
+    const hostId = session.user.id;
+    if (t.hostId && t.hostId !== hostId) {
+      throw new Error('Host ID does not match authenticated user.');
+    }
+
     const { data, error } = await supabase
       .from('tournaments')
       .insert({
         id: t.id || crypto.randomUUID(),
-        host_id: t.hostId,
+        host_id: hostId,
         name: t.name,
         game: t.game,
         format: t.format,
         status: t.status || 'draft',
+        visibility: t.visibility || 'public',
+        rules: t.rules || [],
         max_participants: t.maxParticipants || 32,
         registration_open: t.registrationOpen ?? false,
         draw_locked: t.drawLocked ?? false,

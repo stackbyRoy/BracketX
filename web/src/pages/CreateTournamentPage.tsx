@@ -99,6 +99,7 @@ export const CreateTournamentPage: React.FC = () => {
         <div style={{
           display: 'flex',
           alignItems: 'center',
+          justifyContent: 'space-between',
           gap: '8px',
           background: 'rgba(235, 87, 87, 0.15)',
           border: '1px solid rgba(235, 87, 87, 0.3)',
@@ -108,8 +109,15 @@ export const CreateTournamentPage: React.FC = () => {
           fontSize: '13px',
           marginBottom: '20px',
         }}>
-          <AlertCircle size={18} />
-          <span>{error}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <AlertCircle size={18} />
+            <span>{error}</span>
+          </div>
+          {error.toLowerCase().includes('sign in') && (
+            <Link to="/auth" style={{ color: '#FFFFFF', textDecoration: 'underline', fontWeight: 600, fontSize: '13px' }}>
+              Sign In
+            </Link>
+          )}
         </div>
       )}
 

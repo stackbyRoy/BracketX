@@ -53,7 +53,8 @@ CREATE POLICY "Tournaments are viewable by everyone"
 
 CREATE POLICY "Authenticated users can create tournaments"
     ON public.tournaments FOR INSERT
-    WITH CHECK (auth.uid() = host_id);
+    TO authenticated
+    WITH CHECK ((select auth.uid()) = host_id);
 
 CREATE POLICY "Hosts can update their own tournaments"
     ON public.tournaments FOR UPDATE

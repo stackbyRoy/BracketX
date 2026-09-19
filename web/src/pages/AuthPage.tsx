@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export const AuthPage: React.FC = () => {
@@ -14,6 +14,7 @@ export const AuthPage: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [infoMsg, setInfoMsg] = useState<string | null>(null);
 
   // If already logged in, redirect
   React.useEffect(() => {
@@ -36,10 +37,17 @@ export const AuthPage: React.FC = () => {
 
     setLoading(true);
     setErrorMsg(null);
+    setInfoMsg(null);
 
     try {
       if (isSignUp) {
-        await signUp(email.trim(), password, displayName.trim());
+        const result = await signUp(email.trim(), password, displayName.trim());
+        if (result.needsEmailConfirmation) {
+          setInfoMsg('Account created! Please check your email to confirm your address, then sign in below.');
+          setIsSignUp(false);
+          setPassword('');
+          return;
+        }
       } else {
         await signIn(email.trim(), password);
       }
@@ -117,7 +125,7 @@ export const AuthPage: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => { setIsSignUp(false); setErrorMsg(null); }}
+            onClick={() => { setIsSignUp(false); setErrorMsg(null); setInfoMsg(null); }}
             style={{
               flex: 1,
               padding: '10px 0',
@@ -134,6 +142,26 @@ export const AuthPage: React.FC = () => {
             Sign In
           </button>
         </div>
+
+        {/* Info message */}
+        {infoMsg && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '10px',
+            background: 'rgba(46, 204, 113, 0.12)',
+            border: '1px solid rgba(46, 204, 113, 0.35)',
+            borderRadius: 'var(--radius-sm)',
+            padding: '12px 14px',
+            marginBottom: '20px',
+            color: '#2ECC71',
+            fontSize: '13px',
+            lineHeight: 1.4,
+          }}>
+            <CheckCircle2 size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
+            <span>{infoMsg}</span>
+          </div>
+        )}
 
         {/* Error message */}
         {errorMsg && (

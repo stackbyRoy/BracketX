@@ -7,10 +7,14 @@ export interface AppUser {
   displayName: string;
 }
 
+export interface SignUpResult {
+  needsEmailConfirmation?: boolean;
+}
+
 interface AuthContextType {
   user: AppUser | null;
   loading: boolean;
-  signUp: (email: string, password: string, displayName: string) => Promise<void>;
+  signUp: (email: string, password: string, displayName: string) => Promise<SignUpResult>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -71,7 +75,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signUp = async (email: string, password: string, displayName: string) => {
+  const signUp = async (email: string, password: string, displayName: string): Promise<SignUpResult> => {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -84,8 +88,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (error) throw error;
 
-    if (data.user) {
-      // Ensure profile row exists
+    if (data.session && data.user) {
+      // Active session established (autoconfirm enabled or immediate token)
       try {
         await supabase.from('profiles').upsert({
           id: data.user.id,
@@ -93,12 +97,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       } catch (_) {}
 
-      setUser({
-        id: data.user.id,
-        email: data.user.email,
-        displayName,
-      });
+      await syncProfile(data.user.id, data.user.email, displayName);
+      return { needsEmailConfirmation: false };
+    } else if (data.user) {
+      // Email confirmation required by Supabase; no active session token was issued.
+      // Do NOT set in-memory user without a valid session!
+      setUser(null);
+      return { needsEmailConfirmation: true };
     }
+
+    return { needsEmailConfirmation: false };
   };
 
   const signIn = async (email: string, password: string) => {
